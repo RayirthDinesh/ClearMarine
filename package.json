@@ -5,12 +5,19 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.103.3",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
+    "axios": "^1.15.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "groq-sdk": "^1.1.2",
     "leaflet": "^1.9.4",
+    "multer": "^2.1.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-leaflet": "^5.0.0",
@@ -19,11 +26,14 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
+    "postinstall": "node scripts/ensure-coco-ssd-sourcemap.js",
     "start": "react-scripts start",
+    "start:api": "node backend/server.js",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "build:glider-data": "python3 scripts/build_corc_glider_json.py"
+    "build:glider-data": "python3 scripts/build_corc_glider_json.py",
+    "cv-server": "python3 cv-server/server.py"
   },
   "eslintConfig": {
     "extends": [

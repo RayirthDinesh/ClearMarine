@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   analyzeDebrisPhoto,
   analyzeDebrisText,
@@ -7,10 +7,7 @@ import {
 } from '../lib/gemini';
 import { supabase } from '../lib/supabase';
 import { predictDrift } from '../lib/drift';
-// On-land detection is disabled for now — see landfall.isOnLandInPacificModel.
-// import { isOnLandInPacificModel } from '../lib/landfall';
-import { classifyPickupMode, pickupBadgeClassName } from '../lib/pickupClassification';
-import { coordsNearlyEqual, formatCoordPair, normalizeLatLon, parseManualLongitudeWest } from '../lib/coords';
+import { formatCoordPair, parseManualLongitude } from '../lib/coords';
 
 const WASTE_TYPE_OPTIONS = [
   { value: 'plastic', label: 'Plastic / foam / bottles' },
@@ -54,14 +51,13 @@ export default function ReportDebris() {
   const [location, setLocation] = useState(null); // { lat, lon }
   const [manualLat, setManualLat] = useState('');
   const [manualLon, setManualLon] = useState('');
+  /** Unsigned manual lon uses this (default W — Pacific Americas). */
+  const [manualLonHemisphere, setManualLonHemisphere] = useState('W');
   const [locMode, setLocMode] = useState('auto'); // auto | manual
   const [loading, setLoading] = useState(false);
   const [locLoading, setLocLoading] = useState(false);
+  const [locError, setLocError] = useState(null);
   const [result, setResult] = useState(null);
-  /** Set when coords look on-land in the Pacific model: show drift preview but block save until user fixes location. */
-  const [landReview, setLandReview] = useState(null);
-  /** After dismissing land gate: show hint that a new offshore position is required. */
-  const [landReentryRequired, setLandReentryRequired] = useState(false);
   const [listening, setListening] = useState(false);
   const [notes, setNotes] = useState('');
   const [wasteType, setWasteType] = useState('');
@@ -70,24 +66,69 @@ export default function ReportDebris() {
   const [spreadLayout, setSpreadLayout] = useState('');
   const fileRef = useRef(null);
   const recognitionRef = useRef(null);
-  /** Normalized coords from last land rejection — block resubmit until user changes position. */
-  const lastRejectedLandCoordsRef = useRef(null);
 
-  useEffect(() => {
-    if (locMode === 'auto') {
-      setLocLoading(true);
-      navigator.geolocation?.getCurrentPosition(
-        (pos) => {
-          setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-          setLocLoading(false);
-        },
-        () => {
+  const retryLowAccuracy = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocMode('manual');
+      setLocLoading(false);
+      setLocError('Unable to retrieve location');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+        setLocLoading(false);
+        setLocError(null);
+      },
+      () => {
+        setLocMode('manual');
+        setLocLoading(false);
+        setLocError('Unable to retrieve location — enter coordinates manually.');
+      },
+      { enableHighAccuracy: false, maximumAge: 60000, timeout: 15000 },
+    );
+  }, []);
+
+  const requestLocation = useCallback(() => {
+    if (locMode !== 'auto') return;
+    if (!navigator.geolocation) {
+      setLocMode('manual');
+      setLocError('Geolocation not supported in this browser.');
+      return;
+    }
+    const host = window.location.hostname;
+    const secureOk = window.isSecureContext || host === 'localhost' || host === '127.0.0.1';
+    if (!secureOk) {
+      setLocMode('manual');
+      setLocError('GPS needs HTTPS (or localhost). Use manual coordinates.');
+      return;
+    }
+    setLocLoading(true);
+    setLocError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+        setLocLoading(false);
+        setLocError(null);
+      },
+      (err) => {
+        if (err.code === 1) {
           setLocMode('manual');
           setLocLoading(false);
+          setLocError('Permission denied — enable location for this site or enter coordinates manually.');
+          return;
         }
-      );
-    }
-  }, [locMode]);
+        retryLowAccuracy();
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 },
+    );
+  }, [locMode, retryLowAccuracy]);
+
+  /** GPS only after the report step loads — permission prompt is in context. */
+  useEffect(() => {
+    if (step !== 'report' || locMode !== 'auto') return;
+    requestLocation();
+  }, [step, locMode, requestLocation]);
 
   const handlePhoto = (e) => {
     const file = e.target.files[0];
@@ -121,45 +162,14 @@ export default function ReportDebris() {
 
   const stopVoice = () => { recognitionRef.current?.stop(); setListening(false); };
 
-  const dismissLandReview = () => {
-    setLandReview((prev) => {
-      if (prev?.coords) {
-        lastRejectedLandCoordsRef.current = {
-          lat: prev.coords.lat,
-          lon: prev.coords.lon,
-        };
-      }
-      return null;
-    });
-    setLocation(null);
-    setManualLat('');
-    setManualLon('');
-    setLocMode('manual');
-    setLandReentryRequired(true);
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     const lat = locMode === 'manual' ? parseFloat(manualLat) : location?.lat;
     const lon = locMode === 'manual'
-      ? parseManualLongitudeWest(manualLon)
+      ? parseManualLongitude(manualLon, manualLonHemisphere === 'E' ? 'E' : 'W')
       : location?.lon;
     if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
       alert('Location required — enter valid latitude and longitude.');
-      return;
-    }
-    const coords = normalizeLatLon(lat, lon);
-    if (!coords) {
-      alert('Invalid coordinates — latitude must be −90…90°, longitude a finite value.');
-      return;
-    }
-    if (
-      lastRejectedLandCoordsRef.current
-      && coordsNearlyEqual(coords, lastRejectedLandCoordsRef.current)
-    ) {
-      alert(
-        'You must change the coordinates from your last attempt. Move the pin to open water (ocean or bay) and enter a new position.',
-      );
       return;
     }
 
@@ -173,7 +183,7 @@ export default function ReportDebris() {
     if (!photo && !structuredReportComplete(reporterStructured)) {
       alert(
         'Without a photo, please complete: type of waste, approximate size, and how much you see. '
-        + 'That lets the AI give a reliable intensity rating.',
+        + 'That lets the AI reconcile intensity with your description.',
       );
       return;
     }
@@ -181,8 +191,8 @@ export default function ReportDebris() {
     setLoading(true);
     try {
       let analysis = photo
-        ? await analyzeDebrisPhoto(photo.base64, photo.mimeType, coords.lat, coords.lon, reporterStructured)
-        : await analyzeDebrisText(notes, coords.lat, coords.lon, reporterStructured);
+        ? await analyzeDebrisPhoto(photo.base64, photo.mimeType, lat, lon, notes, reporterStructured)
+        : await analyzeDebrisText(notes, lat, lon, reporterStructured);
 
       if (photo && (notesLookSufficient(notes) || structuredReportComplete(reporterStructured))) {
         analysis = {
@@ -204,12 +214,7 @@ export default function ReportDebris() {
         }
       }
 
-      const drift = await predictDrift(coords.lat, coords.lon);
-
-      // On-land interception disabled — submissions go straight through; the drift→shore
-      // classifier (ship_coast) still routes flagged debris to shore crews downstream.
-
-      const pickup = classifyPickupMode(coords.lat, coords.lon, drift);
+      const drift = await predictDrift(lat, lon);
 
       const structuredSummary = structuredReportComplete(reporterStructured)
         ? `[Reporter: type=${reporterStructured.waste_type}; size=${reporterStructured.size_category}; amount=${reporterStructured.quantity_band}${reporterStructured.spread_layout ? `; spread=${reporterStructured.spread_layout}` : ''}]\n\n`
@@ -219,7 +224,7 @@ export default function ReportDebris() {
         : '';
       const scaleBlock = (analysis.approximate_size && analysis.approximate_size !== 'unknown')
         || (analysis.quantity_estimate && analysis.quantity_estimate !== 'unknown')
-        ? `\n\nAI scale summary — size: ${analysis.approximate_size}; quantity: ${analysis.quantity_estimate}; spread: ${analysis.spread || 'unknown'}`
+        ? `\n\nScale summary — size: ${analysis.approximate_size}; quantity: ${analysis.quantity_estimate}; spread: ${analysis.spread || 'unknown'}`
         : '';
       const geminiAnalysisStored = [
         structuredSummary + analysis.gemini_analysis + scaleBlock + intensityBlock,
@@ -230,14 +235,13 @@ export default function ReportDebris() {
         .from('debris_sightings')
         .insert({
           reporter_name: name,
-          latitude: coords.lat,
-          longitude: coords.lon,
+          latitude: lat,
+          longitude: lon,
           debris_type: analysis.debris_type,
           density_score: analysis.density_score,
           density_label: analysis.density_label,
           estimated_volume: analysis.estimated_volume,
           gemini_analysis: geminiAnalysisStored,
-          pickup_mode: pickup.key,
           status: 'reported',
           jurisdiction: 'ClearMarine Operations',
           source_jurisdiction: 'public',
@@ -260,9 +264,7 @@ export default function ReportDebris() {
         current_bearing: drift.bearing,
       });
 
-      lastRejectedLandCoordsRef.current = null;
-      setLandReentryRequired(false);
-      setResult({ analysis, drift, lat: coords.lat, lon: coords.lon, pickup });
+      setResult({ analysis, drift, lat, lon });
       setStep('done');
     } catch (err) {
       console.error(err);
@@ -315,59 +317,6 @@ export default function ReportDebris() {
     );
   }
 
-  if (landReview) {
-    const { analysis, drift, coords: crd, pickup } = landReview;
-    return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
-        <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-amber-700/60 shadow-2xl">
-          <div className="text-center mb-4">
-            <div className="text-4xl mb-2">⚠️</div>
-            <h2 className="text-white font-bold text-xl">Location looks on land</h2>
-            {pickup && (
-              <div className="mt-2 flex justify-center">
-                <span className={`text-xs font-semibold px-3 py-1 rounded-lg ${pickupBadgeClassName(pickup.key)}`}>
-                  {pickup.shortLabel} — move offshore for vessel ops
-                </span>
-              </div>
-            )}
-            <p className="text-amber-200/90 text-sm mt-2 leading-snug">
-              In our coastal model this position is <span className="font-semibold">inland or onshore</span>, not open ocean.
-              Drift below is illustrative only — we cannot file the sighting until you move the pin to the water (ocean or bay).
-            </p>
-            <p className="text-slate-400 text-xs mt-2 font-mono">{formatCoordPair(crd.lat, crd.lon)}</p>
-          </div>
-
-          <div className="bg-slate-900 rounded-xl p-4 mb-4 border border-slate-700">
-            <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wider">Illustrative drift (not saved)</p>
-            <div className="space-y-1.5">
-              {drift.predictions.map((p) => (
-                <div key={p.hours} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">+{p.hours}h</span>
-                  <span className="text-cyan-400/90 font-mono">{formatCoordPair(p.lat, p.lon)}</span>
-                </div>
-              ))}
-            </div>
-            <p className="text-slate-500 text-xs mt-2">
-              Current: {drift.speed.toFixed(2)} kn @ {drift.bearing.toFixed(0)}° — {drift.source}
-            </p>
-          </div>
-
-          <div className="bg-slate-700/50 rounded-xl p-3 mb-4 border border-slate-600">
-            <p className="text-slate-300 text-xs leading-relaxed">{analysis.gemini_analysis?.slice(0, 200)}{analysis.gemini_analysis?.length > 200 ? '…' : ''}</p>
-          </div>
-
-          <button
-            type="button"
-            onClick={dismissLandReview}
-            className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
-          >
-            Edit location — try again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   if (step === 'done' && result) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
@@ -392,9 +341,11 @@ export default function ReportDebris() {
             </div>
             {(result.analysis.approximate_size || result.analysis.quantity_estimate) && (
               <p className="text-slate-400 text-xs">
-                Scale (AI): {result.analysis.approximate_size}
+                Scale (reconciled): {result.analysis.approximate_size}
                 {result.analysis.quantity_estimate ? ` · ${result.analysis.quantity_estimate}` : ''}
-                {result.analysis.spread && result.analysis.spread !== 'unknown' ? ` · ${result.analysis.spread.replace(/_/g, ' ')}` : ''}
+                {result.analysis.spread && result.analysis.spread !== 'unknown'
+                  ? ` · ${String(result.analysis.spread).replace(/_/g, ' ')}`
+                  : ''}
               </p>
             )}
             {result.analysis.intensity_rationale ? (
@@ -402,21 +353,97 @@ export default function ReportDebris() {
                 Why this rating: {result.analysis.intensity_rationale}
               </p>
             ) : null}
+            {result.analysis.severity_assessment && (
+              <div className="rounded-lg border border-cyan-800/60 bg-slate-900/90 p-3 space-y-2">
+                <p className="text-cyan-400 text-[10px] font-semibold uppercase tracking-wider">Reconciled risk (CV + expert hypothesis)</p>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-slate-300">
+                    Severity <span className="text-white font-mono">{result.analysis.severity_assessment.severity}/10</span>
+                  </span>
+                  <span className="text-slate-500">·</span>
+                  <span className="text-slate-300">
+                    confidence <span className="text-white font-mono">{result.analysis.severity_assessment.confidence ?? '—'}</span>
+                  </span>
+                  {result.analysis.severity_assessment.agreement_level && (
+                    <>
+                      <span className="text-slate-500">·</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${
+                          result.analysis.severity_assessment.agreement_level === 'high'
+                            ? 'bg-emerald-900/80 text-emerald-200'
+                            : result.analysis.severity_assessment.agreement_level === 'low'
+                              ? 'bg-amber-900/80 text-amber-200'
+                              : 'bg-slate-700 text-slate-200'
+                        }`}
+                      >
+                        agreement: {result.analysis.severity_assessment.agreement_level}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {result.analysis.severity_assessment.final_objects?.length > 0 && (
+                  <div>
+                    <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Final objects (reconciled)</p>
+                    <ul className="text-slate-300 text-[11px] space-y-0.5 font-mono">
+                      {result.analysis.severity_assessment.final_objects.map((o, i) => (
+                        <li key={i}>
+                          <span className="text-cyan-500/90">{o.role || '?'}</span>{' '}
+                          {o.label || '—'}{' '}
+                          <span className="text-slate-500">({o.source || '?'})</span>
+                          {o.detail ? <span className="text-slate-500"> — {o.detail}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {result.analysis.severity_assessment.key_factors?.length > 0 && (
+                  <ul className="text-slate-400 text-[11px] list-disc list-inside space-y-0.5">
+                    {result.analysis.severity_assessment.key_factors.map((f, i) => (
+                      <li key={i}>{f}</li>
+                    ))}
+                  </ul>
+                )}
+                {result.analysis.severity_assessment.conflicts?.length > 0 && (
+                  <div className="border-t border-slate-700 pt-2 mt-1">
+                    <p className="text-amber-400/90 text-[10px] font-semibold uppercase tracking-wider mb-1">Conflicts & resolution</p>
+                    <ul className="text-slate-400 text-[11px] space-y-1">
+                      {result.analysis.severity_assessment.conflicts.map((c, i) => (
+                        <li key={i}>
+                          <span className="text-slate-300">{c.topic}</span>
+                          {c.resolution ? (
+                            <span className="text-slate-500"> → {c.resolution}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {result.analysis.pipeline_evidence?.detection && (() => {
+                  const det = result.analysis.pipeline_evidence.detection;
+                  const ac = det.animals?.length ?? 0;
+                  const dc = det.debris?.length ?? 0;
+                  const empty = ac === 0 && dc === 0;
+                  return (
+                    <p className={`text-[10px] font-mono leading-relaxed ${empty ? 'text-amber-300/90' : 'text-slate-500'}`}>
+                      {empty ? (
+                        <>
+                          Object detector ({det.detector}): <strong>no bbox hits</strong> (0 animals, 0 debris above
+                          confidence threshold). Dense rating here comes from your structured report / LLM text — not
+                          from counted objects in the image.
+                        </>
+                      ) : (
+                        <>
+                          Raw CV: {det.detector} · animals {ac}, debris {dc}
+                          {result.analysis.pipeline_evidence.geo?.protected_area ? ' · illustrative protected-area flag' : ''}
+                        </>
+                      )}
+                    </p>
+                  );
+                })()}
+              </div>
+            )}
             <p className="text-slate-300 text-sm leading-relaxed">{result.analysis.gemini_analysis}</p>
           </div>
-
-          {result.pickup && (
-            <div className="bg-slate-900/80 rounded-xl p-4 mb-4 border border-slate-600">
-              <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wider">Pickup routing</p>
-              <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-lg mb-2 ${pickupBadgeClassName(result.pickup.key)}`}>
-                {result.pickup.shortLabel}
-              </span>
-              <p className="text-slate-400 text-xs leading-relaxed">{result.pickup.detail}</p>
-              <p className="text-slate-600 text-[10px] mt-2 leading-snug">
-                Based on the same drift model as the dashboard (CORC glider index when nearby, else HYCOM, else fallback) and the Pacific shoreline clip.
-              </p>
-            </div>
-          )}
 
           <div className="bg-slate-900 rounded-xl p-4 mb-4">
             <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wider">Predicted Drift Path</p>
@@ -436,12 +463,6 @@ export default function ReportDebris() {
             </p>
           </div>
 
-          <a
-            href={`/dashboard?lat=${result.lat}&lon=${result.lon}`}
-            className="w-full block text-center bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-3 rounded-xl transition-colors text-sm mb-2"
-          >
-            View on Dashboard Map →
-          </a>
           <button
             onClick={() => {
               setStep('name');
@@ -453,12 +474,12 @@ export default function ReportDebris() {
               setQuantityBand('');
               setSpreadLayout('');
               setResult(null);
-              setLandReview(null);
-              lastRejectedLandCoordsRef.current = null;
-              setLandReentryRequired(false);
               setLocation(null);
+              setLocError(null);
+              setLocLoading(false);
               setManualLat('');
               setManualLon('');
+              setManualLonHemisphere('W');
             }}
             className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium py-3 rounded-xl transition-colors text-sm"
           >
@@ -486,7 +507,12 @@ export default function ReportDebris() {
       <form onSubmit={handleSubmit} className="max-w-lg mx-auto p-4 space-y-4">
         {/* Photo upload */}
         <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
-          <p className="text-slate-300 text-sm font-medium mb-3">Debris Photo</p>
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <p className="text-slate-300 text-sm font-medium">Debris Photo</p>
+            <p className="text-slate-500 text-[10px] text-right max-w-[240px] leading-snug">
+              Your form + notes lead; CV JSON adds hints. If COCO finds nothing, Gemini may read the photo once (when API key set). Groq only sees JSON.
+            </p>
+          </div>
           {photo ? (
             <div className="relative">
               <img src={photo.preview} alt="Debris" className="w-full h-48 object-cover rounded-xl" />
@@ -511,15 +537,15 @@ export default function ReportDebris() {
           )}
           <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} className="hidden" />
           <p className="text-slate-500 text-xs mt-2">
-            No photo? Use the fields below — type, size, and amount are required for a rated text report.
+            No photo? Complete &quot;What you saw&quot; below — type, size, and amount are required for a text-only report.
           </p>
         </div>
 
-        {/* Structured sighting details */}
+        {/* Structured sighting details (friend: dropdowns for LLM scale / importance) */}
         <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700 space-y-3">
           <p className="text-slate-300 text-sm font-medium">What you saw</p>
           <p className="text-slate-500 text-xs leading-snug">
-            Separate fields help the model quantify intensity (1–10) and explain the score. Required if you are not attaching a photo.
+            These fields drive the AI assessment first; CV refines when it recognizes objects. Required if you are not attaching a photo.
           </p>
           <div>
             <label className="block text-slate-400 text-xs font-medium mb-1">Type of waste</label>
@@ -579,24 +605,59 @@ export default function ReportDebris() {
           <div className="flex items-center justify-between mb-3">
             <p className="text-slate-300 text-sm font-medium">Location</p>
             <div className="flex gap-1">
-              <button type="button" onClick={() => setLocMode('auto')} className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${locMode === 'auto' ? 'bg-cyan-700 text-white' : 'bg-slate-700 text-slate-400'}`}>Auto GPS</button>
-              <button type="button" onClick={() => setLocMode('manual')} className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${locMode === 'manual' ? 'bg-cyan-700 text-white' : 'bg-slate-700 text-slate-400'}`}>Manual</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocMode('auto');
+                  setLocError(null);
+                  setLocation(null);
+                  queueMicrotask(() => {
+                    if (step === 'report') requestLocation();
+                  });
+                }}
+                className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${locMode === 'auto' ? 'bg-cyan-700 text-white' : 'bg-slate-700 text-slate-400'}`}
+              >
+                Auto GPS
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocMode('manual');
+                  setLocError(null);
+                }}
+                className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${locMode === 'manual' ? 'bg-cyan-700 text-white' : 'bg-slate-700 text-slate-400'}`}
+              >
+                Manual
+              </button>
             </div>
           </div>
-          {landReentryRequired && (
-            <p className="text-amber-200/90 text-xs leading-snug mb-3 border border-amber-700/50 rounded-lg px-3 py-2 bg-amber-950/30">
-              Enter offshore coordinates (west longitude). You can switch back to Auto GPS after updating your position.
-            </p>
-          )}
           {locMode === 'auto' ? (
-            locLoading ? (
-              <p className="text-slate-400 text-sm">Detecting location...</p>
-            ) : location ? (
+            location ? (
               <p className="text-cyan-400 text-sm font-mono">
                 {formatCoordPair(location.lat, location.lon)} ✓
               </p>
+            ) : locError && !locLoading ? (
+              <div className="space-y-2">
+                <p className="text-amber-400/90 text-sm">{locError}</p>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => requestLocation()}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-cyan-800 hover:bg-cyan-700 text-white"
+                  >
+                    Retry GPS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setLocMode('manual'); setLocError(null); }}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200"
+                  >
+                    Enter manually
+                  </button>
+                </div>
+              </div>
             ) : (
-              <p className="text-red-400 text-sm">GPS unavailable — switch to Manual</p>
+              <p className="text-slate-400 text-sm">Getting your location…</p>
             )
           ) : (
             <div className="space-y-2">
@@ -609,17 +670,28 @@ export default function ReportDebris() {
                   placeholder="Latitude (e.g. 34.05)"
                   className="flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
-                <input
-                  type="number"
-                  step="any"
-                  value={manualLon}
-                  onChange={(e) => setManualLon(e.target.value)}
-                  placeholder="Longitude °W (e.g. 120.4)"
-                  className="min-w-0 flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
+                <div className="flex flex-1 gap-1 min-w-0">
+                  <input
+                    type="number"
+                    step="any"
+                    value={manualLon}
+                    onChange={(e) => setManualLon(e.target.value)}
+                    placeholder="Longitude (e.g. 120.4)"
+                    className="min-w-0 flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                  <select
+                    value={manualLonHemisphere}
+                    onChange={(e) => setManualLonHemisphere(e.target.value)}
+                    className="shrink-0 bg-slate-700 text-white rounded-xl px-2 py-2 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    title="East or West — unsigned numbers use this"
+                  >
+                    <option value="W">W</option>
+                    <option value="E">E</option>
+                  </select>
+                </div>
               </div>
               <p className="text-slate-500 text-xs leading-snug">
-                All coordinates use <span className="text-slate-300">west longitude</span>: enter the degrees west as a positive number (e.g. <span className="font-mono text-slate-400">120.4</span> for 120.4°W), or type a signed decimal with a minus sign (e.g. <span className="font-mono text-slate-400">-120.4</span>).
+                Tip: For US West Coast, enter longitude magnitude and choose <span className="text-slate-400">W</span> (e.g. 120.4 + W = 120.4°W). Or type a signed value <span className="font-mono text-slate-400">-120.4</span> — sign overrides the menu.
               </p>
             </div>
           )}
@@ -652,7 +724,7 @@ export default function ReportDebris() {
           disabled={loading || (locMode === 'auto' && !location)}
           className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white font-bold py-4 rounded-xl transition-colors text-base"
         >
-          {loading ? 'Analyzing with AI + Computing Drift...' : 'Submit Sighting Report'}
+          {loading ? 'Detection + reconciliation + drift…' : 'Submit Sighting Report'}
         </button>
       </form>
     </div>

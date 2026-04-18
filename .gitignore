@@ -26,3 +26,13 @@ yarn-error.log*
 # Large raw glider NetCDF — rebuild JSON with: python3 scripts/build_corc_glider_json.py
 CORC.nc
 *.nc
+
+# Python virtual environments
+.venv/
+venv/
+__pycache__/
+
+# ML model weights (large binaries)
+*.pt
+*.pth
+*.onnx
