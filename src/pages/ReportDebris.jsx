@@ -1,10 +1,50 @@
 import { useState, useRef, useEffect } from 'react';
-import { analyzeDebrisPhoto, analyzeDebrisText, notesLookSufficient } from '../lib/gemini';
+import {
+  analyzeDebrisPhoto,
+  analyzeDebrisText,
+  notesLookSufficient,
+  structuredReportComplete,
+} from '../lib/gemini';
 import { supabase } from '../lib/supabase';
 import { predictDrift } from '../lib/drift';
 import { isOnLandInPacificModel } from '../lib/landfall';
 import { classifyPickupMode, pickupBadgeClassName } from '../lib/pickupClassification';
 import { coordsNearlyEqual, formatCoordPair, normalizeLatLon, parseManualLongitudeWest } from '../lib/coords';
+
+const WASTE_TYPE_OPTIONS = [
+  { value: 'plastic', label: 'Plastic / foam / bottles' },
+  { value: 'fishing_gear', label: 'Fishing gear / nets / rope' },
+  { value: 'organic', label: 'Organic / wood / vegetation' },
+  { value: 'chemical', label: 'Oil / chemical / hazardous sheen' },
+  { value: 'mixed', label: 'Mixed types' },
+  { value: 'unknown', label: 'Not sure' },
+];
+
+const SIZE_OPTIONS = [
+  { value: 'Single item (hand-sized or smaller)', label: 'One small item (hand-sized or smaller)' },
+  { value: 'Single large item (bucket to tire-sized)', label: 'One large item (bucket to tire-sized)' },
+  { value: 'Pile — fills a shopping bag', label: 'Pile — about a shopping bag' },
+  { value: 'Pile — wheelbarrow or larger', label: 'Pile — wheelbarrow-sized or larger' },
+  { value: 'Linear debris — a few meters', label: 'Stretched along shore/water — a few meters' },
+  { value: 'Linear debris — tens of meters or more', label: 'Line or slick — tens of meters or more' },
+  { value: 'Widespread field / patch', label: 'Widespread patch or field of debris' },
+];
+
+const QUANTITY_OPTIONS = [
+  { value: '1', label: '1 piece' },
+  { value: '2–10', label: '2–10 pieces' },
+  { value: '10–100', label: '10–100 pieces' },
+  { value: '100+', label: 'More than 100 pieces' },
+  { value: 'Continuous line or slick', label: 'Continuous line or slick (no clear count)' },
+];
+
+const SPREAD_OPTIONS = [
+  { value: '', label: 'Not sure / skip' },
+  { value: 'concentrated', label: 'Mostly one spot' },
+  { value: 'scattered', label: 'Scattered pieces' },
+  { value: 'linear_along_shore', label: 'Along a shoreline or track' },
+  { value: 'widespread_patch', label: 'Spread over a wide area' },
+];
 
 export default function ReportDebris() {
   const [step, setStep] = useState('name'); // name | report | done
@@ -23,6 +63,10 @@ export default function ReportDebris() {
   const [landReentryRequired, setLandReentryRequired] = useState(false);
   const [listening, setListening] = useState(false);
   const [notes, setNotes] = useState('');
+  const [wasteType, setWasteType] = useState('');
+  const [sizeCategory, setSizeCategory] = useState('');
+  const [quantityBand, setQuantityBand] = useState('');
+  const [spreadLayout, setSpreadLayout] = useState('');
   const fileRef = useRef(null);
   const recognitionRef = useRef(null);
   /** Normalized coords from last land rejection — block resubmit until user changes position. */
@@ -117,13 +161,29 @@ export default function ReportDebris() {
       );
       return;
     }
+
+    const reporterStructured = {
+      waste_type: wasteType.trim(),
+      size_category: sizeCategory.trim(),
+      quantity_band: quantityBand.trim(),
+      spread_layout: spreadLayout.trim(),
+    };
+
+    if (!photo && !structuredReportComplete(reporterStructured)) {
+      alert(
+        'Without a photo, please complete: type of waste, approximate size, and how much you see. '
+        + 'That lets the AI give a reliable intensity rating.',
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       let analysis = photo
-        ? await analyzeDebrisPhoto(photo.base64, photo.mimeType, coords.lat, coords.lon)
-        : await analyzeDebrisText(notes, coords.lat, coords.lon);
+        ? await analyzeDebrisPhoto(photo.base64, photo.mimeType, coords.lat, coords.lon, reporterStructured)
+        : await analyzeDebrisText(notes, coords.lat, coords.lon, reporterStructured);
 
-      if (photo && notesLookSufficient(notes)) {
+      if (photo && (notesLookSufficient(notes) || structuredReportComplete(reporterStructured))) {
         analysis = {
           ...analysis,
           needs_more_info: false,
@@ -152,6 +212,21 @@ export default function ReportDebris() {
 
       const pickup = classifyPickupMode(coords.lat, coords.lon, drift);
 
+      const structuredSummary = structuredReportComplete(reporterStructured)
+        ? `[Reporter: type=${reporterStructured.waste_type}; size=${reporterStructured.size_category}; amount=${reporterStructured.quantity_band}${reporterStructured.spread_layout ? `; spread=${reporterStructured.spread_layout}` : ''}]\n\n`
+        : '';
+      const intensityBlock = analysis.intensity_rationale
+        ? `\n\nIntensity rating (${analysis.density_score}/10 — ${analysis.density_label}): ${analysis.intensity_rationale}`
+        : '';
+      const scaleBlock = (analysis.approximate_size && analysis.approximate_size !== 'unknown')
+        || (analysis.quantity_estimate && analysis.quantity_estimate !== 'unknown')
+        ? `\n\nAI scale summary — size: ${analysis.approximate_size}; quantity: ${analysis.quantity_estimate}; spread: ${analysis.spread || 'unknown'}`
+        : '';
+      const geminiAnalysisStored = [
+        structuredSummary + analysis.gemini_analysis + scaleBlock + intensityBlock,
+        notes.trim() && `Reporter notes: ${notes.trim()}`,
+      ].filter(Boolean).join('\n\n');
+
       const { data: sighting, error } = await supabase
         .from('debris_sightings')
         .insert({
@@ -162,7 +237,7 @@ export default function ReportDebris() {
           density_score: analysis.density_score,
           density_label: analysis.density_label,
           estimated_volume: analysis.estimated_volume,
-          gemini_analysis: notes ? `${analysis.gemini_analysis} Reporter notes: ${notes}` : analysis.gemini_analysis,
+          gemini_analysis: geminiAnalysisStored,
           pickup_mode: pickup.key,
           status: 'reported',
           jurisdiction: 'ClearMarine Operations',
@@ -316,6 +391,18 @@ export default function ReportDebris() {
                 {result.analysis.estimated_volume === 'unknown' ? 'Volume not estimated' : result.analysis.estimated_volume}
               </span>
             </div>
+            {(result.analysis.approximate_size || result.analysis.quantity_estimate) && (
+              <p className="text-slate-400 text-xs">
+                Scale (AI): {result.analysis.approximate_size}
+                {result.analysis.quantity_estimate ? ` · ${result.analysis.quantity_estimate}` : ''}
+                {result.analysis.spread && result.analysis.spread !== 'unknown' ? ` · ${result.analysis.spread.replace(/_/g, ' ')}` : ''}
+              </p>
+            )}
+            {result.analysis.intensity_rationale ? (
+              <p className="text-slate-400 text-xs italic border-l-2 border-cyan-600 pl-2 mt-1">
+                Why this rating: {result.analysis.intensity_rationale}
+              </p>
+            ) : null}
             <p className="text-slate-300 text-sm leading-relaxed">{result.analysis.gemini_analysis}</p>
           </div>
 
@@ -356,6 +443,10 @@ export default function ReportDebris() {
               setName('');
               setPhoto(null);
               setNotes('');
+              setWasteType('');
+              setSizeCategory('');
+              setQuantityBand('');
+              setSpreadLayout('');
               setResult(null);
               setLandReview(null);
               lastRejectedLandCoordsRef.current = null;
@@ -414,6 +505,68 @@ export default function ReportDebris() {
             </button>
           )}
           <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} className="hidden" />
+          <p className="text-slate-500 text-xs mt-2">
+            No photo? Use the fields below — type, size, and amount are required for a rated text report.
+          </p>
+        </div>
+
+        {/* Structured sighting details */}
+        <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700 space-y-3">
+          <p className="text-slate-300 text-sm font-medium">What you saw</p>
+          <p className="text-slate-500 text-xs leading-snug">
+            Separate fields help the model quantify intensity (1–10) and explain the score. Required if you are not attaching a photo.
+          </p>
+          <div>
+            <label className="block text-slate-400 text-xs font-medium mb-1">Type of waste</label>
+            <select
+              value={wasteType}
+              onChange={(e) => setWasteType(e.target.value)}
+              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            >
+              <option value="">Select…</option>
+              {WASTE_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-400 text-xs font-medium mb-1">Approximate size (biggest dimension or overall pile)</label>
+            <select
+              value={sizeCategory}
+              onChange={(e) => setSizeCategory(e.target.value)}
+              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            >
+              <option value="">Select…</option>
+              {SIZE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-400 text-xs font-medium mb-1">How much / how many</label>
+            <select
+              value={quantityBand}
+              onChange={(e) => setQuantityBand(e.target.value)}
+              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            >
+              <option value="">Select…</option>
+              {QUANTITY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-400 text-xs font-medium mb-1">How it is spread <span className="text-slate-600">(optional)</span></label>
+            <select
+              value={spreadLayout}
+              onChange={(e) => setSpreadLayout(e.target.value)}
+              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            >
+              {SPREAD_OPTIONS.map((o) => (
+                <option key={o.value || 'skip'} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Location */}
@@ -470,7 +623,7 @@ export default function ReportDebris() {
         {/* Voice / text notes */}
         <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-slate-300 text-sm font-medium">Additional Notes <span className="text-slate-500">(optional)</span></p>
+            <p className="text-slate-300 text-sm font-medium">Extra detail <span className="text-slate-500">(optional)</span></p>
             <button
               type="button"
               onClick={listening ? stopVoice : startVoice}
@@ -482,7 +635,7 @@ export default function ReportDebris() {
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Describe what you see — size, location landmarks, wildlife impact..."
+            placeholder="Landmarks, wildlife, smell/sheen, time seen, anything not captured above…"
             rows={3}
             className="w-full bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
           />
