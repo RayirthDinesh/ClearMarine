@@ -2,7 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import { analyzeDebrisPhoto, analyzeDebrisText, notesLookSufficient } from '../lib/gemini';
 import { supabase } from '../lib/supabase';
 import { predictDrift } from '../lib/drift';
-import { formatCoordPair, parseManualLongitude } from '../lib/coords';
+import { isOnLandInPacificModel } from '../lib/landfall';
+import { classifyPickupMode, pickupBadgeClassName } from '../lib/pickupClassification';
+import { coordsNearlyEqual, formatCoordPair, normalizeLatLon, parseManualLongitudeWest } from '../lib/coords';
 
 export default function ReportDebris() {
   const [step, setStep] = useState('name'); // name | report | done
@@ -11,16 +13,20 @@ export default function ReportDebris() {
   const [location, setLocation] = useState(null); // { lat, lon }
   const [manualLat, setManualLat] = useState('');
   const [manualLon, setManualLon] = useState('');
-  /** Unsigned manual lon uses this (default W — Pacific Americas). */
-  const [manualLonHemisphere, setManualLonHemisphere] = useState('W');
   const [locMode, setLocMode] = useState('auto'); // auto | manual
   const [loading, setLoading] = useState(false);
   const [locLoading, setLocLoading] = useState(false);
   const [result, setResult] = useState(null);
+  /** Set when coords look on-land in the Pacific model: show drift preview but block save until user fixes location. */
+  const [landReview, setLandReview] = useState(null);
+  /** After dismissing land gate: show hint that a new offshore position is required. */
+  const [landReentryRequired, setLandReentryRequired] = useState(false);
   const [listening, setListening] = useState(false);
   const [notes, setNotes] = useState('');
   const fileRef = useRef(null);
   const recognitionRef = useRef(null);
+  /** Normalized coords from last land rejection — block resubmit until user changes position. */
+  const lastRejectedLandCoordsRef = useRef(null);
 
   useEffect(() => {
     if (locMode === 'auto') {
@@ -70,21 +76,52 @@ export default function ReportDebris() {
 
   const stopVoice = () => { recognitionRef.current?.stop(); setListening(false); };
 
+  const dismissLandReview = () => {
+    setLandReview((prev) => {
+      if (prev?.coords) {
+        lastRejectedLandCoordsRef.current = {
+          lat: prev.coords.lat,
+          lon: prev.coords.lon,
+        };
+      }
+      return null;
+    });
+    setLocation(null);
+    setManualLat('');
+    setManualLon('');
+    setLocMode('manual');
+    setLandReentryRequired(true);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const lat = locMode === 'manual' ? parseFloat(manualLat) : location?.lat;
     const lon = locMode === 'manual'
-      ? parseManualLongitude(manualLon, manualLonHemisphere === 'E' ? 'E' : 'W')
+      ? parseManualLongitudeWest(manualLon)
       : location?.lon;
     if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
       alert('Location required — enter valid latitude and longitude.');
       return;
     }
+    const coords = normalizeLatLon(lat, lon);
+    if (!coords) {
+      alert('Invalid coordinates — latitude must be −90…90°, longitude a finite value.');
+      return;
+    }
+    if (
+      lastRejectedLandCoordsRef.current
+      && coordsNearlyEqual(coords, lastRejectedLandCoordsRef.current)
+    ) {
+      alert(
+        'You must change the coordinates from your last attempt. Move the pin to open water (ocean or bay) and enter a new position.',
+      );
+      return;
+    }
     setLoading(true);
     try {
       let analysis = photo
-        ? await analyzeDebrisPhoto(photo.base64, photo.mimeType, lat, lon)
-        : await analyzeDebrisText(notes, lat, lon);
+        ? await analyzeDebrisPhoto(photo.base64, photo.mimeType, coords.lat, coords.lon)
+        : await analyzeDebrisText(notes, coords.lat, coords.lon);
 
       if (photo && notesLookSufficient(notes)) {
         analysis = {
@@ -106,19 +143,27 @@ export default function ReportDebris() {
         }
       }
 
-      const drift = await predictDrift(lat, lon);
+      const drift = await predictDrift(coords.lat, coords.lon);
+
+      if (isOnLandInPacificModel(coords.lat, coords.lon)) {
+        setLandReview({ analysis, drift, coords, pickup: classifyPickupMode(coords.lat, coords.lon, drift) });
+        return;
+      }
+
+      const pickup = classifyPickupMode(coords.lat, coords.lon, drift);
 
       const { data: sighting, error } = await supabase
         .from('debris_sightings')
         .insert({
           reporter_name: name,
-          latitude: lat,
-          longitude: lon,
+          latitude: coords.lat,
+          longitude: coords.lon,
           debris_type: analysis.debris_type,
           density_score: analysis.density_score,
           density_label: analysis.density_label,
           estimated_volume: analysis.estimated_volume,
           gemini_analysis: notes ? `${analysis.gemini_analysis} Reporter notes: ${notes}` : analysis.gemini_analysis,
+          pickup_mode: pickup.key,
           status: 'reported',
           jurisdiction: 'ClearMarine Operations',
           source_jurisdiction: 'public',
@@ -141,7 +186,9 @@ export default function ReportDebris() {
         current_bearing: drift.bearing,
       });
 
-      setResult({ analysis, drift, lat, lon });
+      lastRejectedLandCoordsRef.current = null;
+      setLandReentryRequired(false);
+      setResult({ analysis, drift, lat: coords.lat, lon: coords.lon, pickup });
       setStep('done');
     } catch (err) {
       console.error(err);
@@ -194,6 +241,59 @@ export default function ReportDebris() {
     );
   }
 
+  if (landReview) {
+    const { analysis, drift, coords: crd, pickup } = landReview;
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
+        <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-amber-700/60 shadow-2xl">
+          <div className="text-center mb-4">
+            <div className="text-4xl mb-2">⚠️</div>
+            <h2 className="text-white font-bold text-xl">Location looks on land</h2>
+            {pickup && (
+              <div className="mt-2 flex justify-center">
+                <span className={`text-xs font-semibold px-3 py-1 rounded-lg ${pickupBadgeClassName(pickup.key)}`}>
+                  {pickup.shortLabel} — move offshore for vessel ops
+                </span>
+              </div>
+            )}
+            <p className="text-amber-200/90 text-sm mt-2 leading-snug">
+              In our coastal model this position is <span className="font-semibold">inland or onshore</span>, not open ocean.
+              Drift below is illustrative only — we cannot file the sighting until you move the pin to the water (ocean or bay).
+            </p>
+            <p className="text-slate-400 text-xs mt-2 font-mono">{formatCoordPair(crd.lat, crd.lon)}</p>
+          </div>
+
+          <div className="bg-slate-900 rounded-xl p-4 mb-4 border border-slate-700">
+            <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wider">Illustrative drift (not saved)</p>
+            <div className="space-y-1.5">
+              {drift.predictions.map((p) => (
+                <div key={p.hours} className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">+{p.hours}h</span>
+                  <span className="text-cyan-400/90 font-mono">{formatCoordPair(p.lat, p.lon)}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-slate-500 text-xs mt-2">
+              Current: {drift.speed.toFixed(2)} kn @ {drift.bearing.toFixed(0)}° — {drift.source}
+            </p>
+          </div>
+
+          <div className="bg-slate-700/50 rounded-xl p-3 mb-4 border border-slate-600">
+            <p className="text-slate-300 text-xs leading-relaxed">{analysis.gemini_analysis?.slice(0, 200)}{analysis.gemini_analysis?.length > 200 ? '…' : ''}</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={dismissLandReview}
+            className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+          >
+            Edit location — try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (step === 'done' && result) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
@@ -218,6 +318,19 @@ export default function ReportDebris() {
             </div>
             <p className="text-slate-300 text-sm leading-relaxed">{result.analysis.gemini_analysis}</p>
           </div>
+
+          {result.pickup && (
+            <div className="bg-slate-900/80 rounded-xl p-4 mb-4 border border-slate-600">
+              <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wider">Pickup routing</p>
+              <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-lg mb-2 ${pickupBadgeClassName(result.pickup.key)}`}>
+                {result.pickup.shortLabel}
+              </span>
+              <p className="text-slate-400 text-xs leading-relaxed">{result.pickup.detail}</p>
+              <p className="text-slate-600 text-[10px] mt-2 leading-snug">
+                Based on the same drift model as the dashboard (CORC glider index when nearby, else HYCOM, else fallback) and the Pacific shoreline clip.
+              </p>
+            </div>
+          )}
 
           <div className="bg-slate-900 rounded-xl p-4 mb-4">
             <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wider">Predicted Drift Path</p>
@@ -244,10 +357,12 @@ export default function ReportDebris() {
               setPhoto(null);
               setNotes('');
               setResult(null);
+              setLandReview(null);
+              lastRejectedLandCoordsRef.current = null;
+              setLandReentryRequired(false);
               setLocation(null);
               setManualLat('');
               setManualLon('');
-              setManualLonHemisphere('W');
             }}
             className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium py-3 rounded-xl transition-colors text-sm"
           >
@@ -310,6 +425,11 @@ export default function ReportDebris() {
               <button type="button" onClick={() => setLocMode('manual')} className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${locMode === 'manual' ? 'bg-cyan-700 text-white' : 'bg-slate-700 text-slate-400'}`}>Manual</button>
             </div>
           </div>
+          {landReentryRequired && (
+            <p className="text-amber-200/90 text-xs leading-snug mb-3 border border-amber-700/50 rounded-lg px-3 py-2 bg-amber-950/30">
+              Enter offshore coordinates (west longitude). You can switch back to Auto GPS after updating your position.
+            </p>
+          )}
           {locMode === 'auto' ? (
             locLoading ? (
               <p className="text-slate-400 text-sm">Detecting location...</p>
@@ -331,28 +451,17 @@ export default function ReportDebris() {
                   placeholder="Latitude (e.g. 34.05)"
                   className="flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
-                <div className="flex flex-1 gap-1 min-w-0">
-                  <input
-                    type="number"
-                    step="any"
-                    value={manualLon}
-                    onChange={(e) => setManualLon(e.target.value)}
-                    placeholder="Longitude (e.g. 120.4)"
-                    className="min-w-0 flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                  <select
-                    value={manualLonHemisphere}
-                    onChange={(e) => setManualLonHemisphere(e.target.value)}
-                    className="shrink-0 bg-slate-700 text-white rounded-xl px-2 py-2 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    title="East or West — unsigned numbers use this"
-                  >
-                    <option value="W">W</option>
-                    <option value="E">E</option>
-                  </select>
-                </div>
+                <input
+                  type="number"
+                  step="any"
+                  value={manualLon}
+                  onChange={(e) => setManualLon(e.target.value)}
+                  placeholder="Longitude °W (e.g. 120.4)"
+                  className="min-w-0 flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
               </div>
               <p className="text-slate-500 text-xs leading-snug">
-                Tip: For US West Coast, enter longitude magnitude and choose <span className="text-slate-400">W</span> (e.g. 120.4 + W = 120.4°W). Or type a signed value <span className="font-mono text-slate-400">-120.4</span> — sign overrides the menu.
+                All coordinates use <span className="text-slate-300">west longitude</span>: enter the degrees west as a positive number (e.g. <span className="font-mono text-slate-400">120.4</span> for 120.4°W), or type a signed decimal with a minus sign (e.g. <span className="font-mono text-slate-400">-120.4</span>).
               </p>
             </div>
           )}

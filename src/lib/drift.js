@@ -1,8 +1,6 @@
 import { supabase } from './supabase';
-import { getNearestGliderCurrent } from './gliderCurrents';
-
-// Cache so the same lat/lon doesn't hit Supabase twice per session
-const currentCache = new Map();
+import { getNearestGliderCurrent, haversineKm } from './gliderCurrents';
+import { normalizeLatLon } from './coords';
 
 function displaceLatLon(lat, lon, km, bearing) {
   const R = 6371;
@@ -22,11 +20,6 @@ function gyroFallback(lat, lon) {
     return { speed: 1.5, bearing: 60, source: 'fallback' };
   }
   return { speed: 1.2, bearing: 200, source: 'fallback' };
-}
-
-// Snap to the nearest 5° grid point (matches seed_currents.js grid resolution)
-function snapToGrid(val, step = 5) {
-  return Math.round(val / step) * step;
 }
 
 /** Resolve surface current: prefer nearby Spray/CORC glider observation, else HYCOM grid, else gyre fallback. */
@@ -58,59 +51,87 @@ async function resolveCurrentForDrift(lat, lon) {
 }
 
 async function fetchCurrentFromDB(lat, lon) {
-  const snappedLat = snapToGrid(Math.max(-80, Math.min(80, lat)));
-  const snappedLon = snapToGrid(lon);
-  const cacheKey = `${snappedLat},${snappedLon}`;
+  const qLat = Math.max(-80, Math.min(80, lat));
+  const qLon = lon;
 
-  if (currentCache.has(cacheKey)) return currentCache.get(cacheKey);
-
-  // Find nearest grid point within 8 degrees (handles edge cases)
   const { data, error } = await supabase
     .from('ocean_currents')
-    .select('speed_knots, bearing, source, recorded_at')
-    .gte('lat', snappedLat - 8)
-    .lte('lat', snappedLat + 8)
-    .gte('lon', snappedLon - 8)
-    .lte('lon', snappedLon + 8)
-    .order('lat', { ascending: true })
-    .limit(1);
+    .select('lat, lon, speed_knots, bearing, source, recorded_at')
+    .gte('lat', qLat - 8)
+    .lte('lat', qLat + 8)
+    .gte('lon', qLon - 8)
+    .lte('lon', qLon + 8)
+    .limit(400);
 
   if (error || !data || data.length === 0) return null;
 
-  const current = {
-    speed: data[0].speed_knots,
-    bearing: data[0].bearing,
-    source: `NOAA HYCOM (${data[0].recorded_at?.slice(0, 10)})`,
+  let nearest = data[0];
+  let nearestKm = haversineKm(lat, lon, data[0].lat, data[0].lon);
+  for (let i = 1; i < data.length; i += 1) {
+    const d = haversineKm(lat, lon, data[i].lat, data[i].lon);
+    if (d < nearestKm) {
+      nearestKm = d;
+      nearest = data[i];
+    }
+  }
+
+  if (!Number.isFinite(nearest.speed_knots) || !Number.isFinite(nearest.bearing)) {
+    return null;
+  }
+
+  return {
+    speed: nearest.speed_knots,
+    bearing: nearest.bearing,
+    source: `NOAA HYCOM (${nearest.recorded_at?.slice(0, 10)})`,
   };
-  currentCache.set(cacheKey, current);
-  return current;
 }
 
 export async function predictDrift(lat, lon) {
-  const current = await resolveCurrentForDrift(lat, lon);
+  const norm = normalizeLatLon(lat, lon);
+  if (!norm) {
+    throw new Error('Invalid coordinates — use latitude −90…90° and a finite longitude.');
+  }
+  const { lat: la, lon: lo } = norm;
+  const current = await resolveCurrentForDrift(la, lo);
   if (current.source.includes('fallback')) {
     console.warn('Drift using gyre fallback — seed ocean_currents or ensure /data/corc_glider_index.json');
   }
 
-  const speedKmh = current.speed * 1.852;
+  const speed = Number.isFinite(current.speed) ? Math.max(0, current.speed) : 0;
+  const bearing = Number.isFinite(current.bearing) ? current.bearing : 0;
+
+  const speedKmh = speed * 1.852;
   const wobble = (Math.random() - 0.5) * 4; // ±2° — lighter noise so tracks match currents more closely
 
   const predictions = [24, 48, 72].map((h) => {
     const km = speedKmh * h;
-    const bearing = (current.bearing + wobble * (h / 24) + 360) % 360;
-    return { hours: h, ...displaceLatLon(lat, lon, km, bearing) };
+    const br = (bearing + wobble * (h / 24) + 360) % 360;
+    return { hours: h, ...displaceLatLon(la, lo, km, br) };
   });
 
-  return { speed: current.speed, bearing: current.bearing, source: current.source, predictions };
+  return { speed, bearing, source: current.source, predictions };
 }
 
 export async function getInterceptionPoint(sightingLat, sightingLon, vesselLat, vesselLon) {
-  const drift = await predictDrift(sightingLat, sightingLon);
+  const sighting = normalizeLatLon(sightingLat, sightingLon);
+  const vessel = normalizeLatLon(vesselLat, vesselLon);
+  if (!sighting || !vessel) return null;
+
+  let drift;
+  try {
+    drift = await predictDrift(sighting.lat, sighting.lon);
+  } catch {
+    return null;
+  }
+
   let best = null;
   let bestDist = Infinity;
   for (const pt of drift.predictions) {
-    const d = Math.hypot(pt.lat - vesselLat, pt.lon - vesselLon);
-    if (d < bestDist) { bestDist = d; best = pt; }
+    const d = haversineKm(pt.lat, pt.lon, vessel.lat, vessel.lon);
+    if (d < bestDist) {
+      bestDist = d;
+      best = pt;
+    }
   }
   return best;
 }

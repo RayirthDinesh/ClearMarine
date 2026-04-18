@@ -1,17 +1,16 @@
 -- ============================================================
 -- ClearMarine — Ocean Waste Coordination System
--- Run this entire file in your Supabase SQL Editor
+-- Safe to run on empty OR existing databases (idempotent DDL).
+-- Does not DROP core tables or DELETE rows — use supabase_seed_demo.sql for demo reset.
 -- ============================================================
 
--- Drop old tables if migrating from ClearER
-drop table if exists ocean_currents cascade;
+-- Legacy ClearER-only tables (remove if you never used ClearER)
 drop table if exists alerts cascade;
-drop table if exists supplies cascade;
 drop table if exists rooms cascade;
 drop table if exists patients cascade;
 
 -- Debris sightings reported by public/crews
-create table debris_sightings (
+create table if not exists debris_sightings (
   id uuid primary key default gen_random_uuid(),
   reporter_name text,
   photo_url text,
@@ -22,6 +21,7 @@ create table debris_sightings (
   density_label text,
   estimated_volume text,
   gemini_analysis text,
+  pickup_mode text,                   -- land | ship | ship_coast | unknown (see src/lib/pickupClassification.js)
   status text default 'reported',     -- reported / assigned / intercepted / cleared
   jurisdiction text default 'Local Coastguard',
   source_jurisdiction text default 'public',
@@ -30,7 +30,7 @@ create table debris_sightings (
 );
 
 -- Cleanup vessels / crews
-create table vessels (
+create table if not exists vessels (
   id uuid primary key default gen_random_uuid(),
   name text,
   zone text,
@@ -45,7 +45,7 @@ create table vessels (
 );
 
 -- Drift predictions per sighting
-create table drift_predictions (
+create table if not exists drift_predictions (
   id uuid primary key default gen_random_uuid(),
   sighting_id uuid references debris_sightings(id) on delete cascade,
   lat_24h float,
@@ -60,7 +60,7 @@ create table drift_predictions (
 );
 
 -- Supplies per zone (nets, fuel, collection bags, PPE)
-create table supplies (
+create table if not exists supplies (
   id uuid primary key default gen_random_uuid(),
   name text,
   zone text,
@@ -70,7 +70,7 @@ create table supplies (
 );
 
 -- Real ocean current data populated by scripts/seed_currents.js (NOAA HYCOM)
-create table ocean_currents (
+create table if not exists ocean_currents (
   id uuid primary key default gen_random_uuid(),
   lat float not null,
   lon float not null,
@@ -82,10 +82,10 @@ create table ocean_currents (
   recorded_at text,
   created_at timestamp default now()
 );
-create index on ocean_currents (lat, lon);
+create index if not exists idx_ocean_currents_lat_lon on ocean_currents (lat, lon);
 
 -- Crew assignments linking vessel to sighting intercept
-create table assignments (
+create table if not exists assignments (
   id uuid primary key default gen_random_uuid(),
   sighting_id uuid references debris_sightings(id) on delete cascade,
   vessel_id uuid references vessels(id) on delete cascade,
@@ -96,6 +96,11 @@ create table assignments (
   gemini_brief text,
   created_at timestamp default now()
 );
+
+-- Columns added after initial deploy (safe if already present)
+alter table debris_sightings add column if not exists pickup_mode text;
+
+comment on column debris_sightings.pickup_mode is 'land | ship | ship_coast | unknown — from pickupClassification + drift';
 
 -- ============================================================
 -- Disable RLS for hackathon demo
@@ -122,58 +127,3 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename='drift_predictions') THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE drift_predictions; END IF;
 END $$;
-
--- ============================================================
--- Seed vessels
--- ============================================================
-delete from assignments;
-delete from drift_predictions;
-delete from debris_sightings;
-delete from supplies;
-delete from vessels;
-
-insert into vessels (name, zone, agency, status, fuel_level, fuel_threshold, capacity, current_lat, current_lon) values
-  ('Ocean Guardian I',   'Zone A — California Coast', 'Local Coastguard', 'available',  78, 25, 100, 34.05, -120.42),
-  ('Sea Shepherd II',    'Zone B — Hawaii Waters',    'Local Coastguard', 'available',  91, 25, 120, 21.30, -157.82),
-  ('EPA Response Unit',  'Zone C — Federal Waters',   'EPA',              'available',  55, 25, 200, 36.10, -124.90),
-  ('Pacific Interceptor','Zone A — California Coast', 'Local Coastguard', 'deployed',   40, 25,  80, 33.70, -118.50),
-  ('Deep Clean Alpha',   'Zone D — Open Pacific',     'EPA',              'maintenance',20, 25, 150, 28.00, -145.00);
-
--- ============================================================
--- Seed supplies per zone
--- ============================================================
-insert into supplies (name, zone, quantity, low_threshold) values
-  ('Collection Nets',       'Zone A — California Coast', 8,  3),
-  ('Fuel Drums',            'Zone A — California Coast', 3,  4),
-  ('PPE Kits',              'Zone A — California Coast', 15, 5),
-  ('Collection Bags',       'Zone A — California Coast', 40, 10),
-  ('Collection Nets',       'Zone B — Hawaii Waters',    5,  3),
-  ('Fuel Drums',            'Zone B — Hawaii Waters',    6,  4),
-  ('Hazmat Suits',          'Zone B — Hawaii Waters',    2,  3),
-  ('Collection Nets',       'Zone C — Federal Waters',   12, 3),
-  ('Fuel Drums',            'Zone C — Federal Waters',   2,  4),
-  ('Oil Booms',             'Zone C — Federal Waters',   4,  5),
-  ('Skimmer Equipment',     'Zone D — Open Pacific',     1,  2),
-  ('Fuel Drums',            'Zone D — Open Pacific',     3,  4);
-
--- ============================================================
--- Seed sample debris sightings + drift predictions
--- ============================================================
-with s1 as (
-  insert into debris_sightings (reporter_name, latitude, longitude, debris_type, density_score, density_label, estimated_volume, gemini_analysis, status, jurisdiction)
-  values ('Coastal Patrol Officer Chen', 33.95, -119.20, 'plastic', 8, 'Critical', '~200 kg',
-    'Large accumulation of plastic bottles, bags and microplastics observed. High marine life entanglement risk. Immediate cleanup recommended.',
-    'reported', 'Local Coastguard')
-  returning id
-),
-s2 as (
-  insert into debris_sightings (reporter_name, latitude, longitude, debris_type, density_score, density_label, estimated_volume, gemini_analysis, status, jurisdiction)
-  values ('Fisherman Rodriguez', 35.40, -122.80, 'fishing_gear', 6, 'Dense', '~80 kg',
-    'Abandoned fishing nets and lines creating ghost fishing hazard. Moderate entanglement risk to marine mammals. Cleanup within 48 hours recommended.',
-    'reported', 'Local Coastguard')
-  returning id
-)
-insert into drift_predictions (sighting_id, lat_24h, lon_24h, lat_48h, lon_48h, lat_72h, lon_72h, current_speed, current_bearing)
-select s1.id, 34.12, -118.60, 34.30, -118.00, 34.50, -117.40, 1.8, 75 from s1
-union all
-select s2.id, 35.55, -122.20, 35.70, -121.60, 35.85, -121.00, 1.5, 80 from s2;

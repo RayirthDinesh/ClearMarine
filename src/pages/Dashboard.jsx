@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, Popup, Circle, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { supabase } from '../lib/supabase';
 import { getCrewSuggestions, generateHandoffBrief, generateAssignmentBrief } from '../lib/gemini';
 import { getInterceptionPoint } from '../lib/drift';
-import { computePacificLandfallDisplay } from '../lib/landfall';
+import { computePacificLandfallDisplay, shouldShowSightingOnDashboard } from '../lib/landfall';
 import { driftSegmentsForMap } from '../lib/mapPath';
 import { formatCoordPair } from '../lib/coords';
+import { classifyPickupMode, pickupBadgeClassName } from '../lib/pickupClassification';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -158,6 +159,23 @@ export default function Dashboard() {
     if (aiRefreshTimerRef.current) clearTimeout(aiRefreshTimerRef.current);
   }, []);
 
+  const visibleSightings = useMemo(
+    () => sightings.filter((s) => shouldShowSightingOnDashboard(s.latitude, s.longitude)),
+    [sightings],
+  );
+
+  const visibleHandoffs = useMemo(
+    () => pendingHandoffs.filter((s) => shouldShowSightingOnDashboard(s.latitude, s.longitude)),
+    [pendingHandoffs],
+  );
+
+  useEffect(() => {
+    if (selectedSightingId == null) return;
+    if (!visibleSightings.some((s) => s.id === selectedSightingId)) {
+      setSelectedSightingId(null);
+    }
+  }, [visibleSightings, selectedSightingId]);
+
   useEffect(() => {
     myAgencyRef.current = myAgency;
     void fetchData().then(() => scheduleAiRefresh());
@@ -189,6 +207,10 @@ export default function Dashboard() {
     if (!assignModal || !selectedVessel) return;
     const vessel = vessels.find((v) => v.id === selectedVessel);
     const intercept = await getInterceptionPoint(assignModal.latitude, assignModal.longitude, vessel.current_lat, vessel.current_lon);
+    if (!intercept) {
+      alert('Could not compute interception — check sighting and vessel coordinates.');
+      return;
+    }
     const brief = await generateAssignmentBrief({
       vesselName: vessel.name,
       debrisType: assignModal.debris_type,
@@ -331,13 +353,20 @@ export default function Dashboard() {
           >
             {AGENCIES.map((a) => <option key={a} value={a}>{a}</option>)}
           </select>
-          <span className="text-slate-300">{sightings.length} active</span>
+          <span className="text-slate-300">
+            {visibleSightings.length} active
+            {sightings.length > visibleSightings.length && (
+              <span className="text-slate-500 ml-1" title="Land positions (Pacific model) are hidden from map and queue">
+                ({sightings.length - visibleSightings.length} on land hidden)
+              </span>
+            )}
+          </span>
           <span className={availableFleet.length === 0 ? 'text-red-400 font-bold' : 'text-cyan-400'}>
             {availableFleet.length} vessel{availableFleet.length === 1 ? '' : 's'} ready
           </span>
-          {pendingHandoffs.length > 0 && (
+          {visibleHandoffs.length > 0 && (
             <span className="bg-yellow-700 text-yellow-200 px-2 py-0.5 rounded-full font-bold">
-              {pendingHandoffs.length} handoff{pendingHandoffs.length > 1 ? 's' : ''}
+              {visibleHandoffs.length} handoff{visibleHandoffs.length > 1 ? 's' : ''}
             </span>
           )}
           {lowSupplies.length > 0 && (
@@ -361,8 +390,19 @@ export default function Dashboard() {
             <CoordTracker onMove={setHoverCoords} onMapClick={setClickCoords} />
             <MapFlyTo target={mapFlyTarget} />
 
-            {sightings.map((s) => {
+            {visibleSightings.map((s) => {
               const drift = getDrift(s.id);
+              const driftForPickup = drift
+                ? {
+                  lat_24h: drift.lat_24h,
+                  lon_24h: drift.lon_24h,
+                  lat_48h: drift.lat_48h,
+                  lon_48h: drift.lon_48h,
+                  lat_72h: drift.lat_72h,
+                  lon_72h: drift.lon_72h,
+                }
+                : null;
+              const pickup = classifyPickupMode(s.latitude, s.longitude, driftForPickup);
               const lf = drift
                 ? computePacificLandfallDisplay(s.latitude, s.longitude, drift)
                 : {
@@ -386,6 +426,12 @@ export default function Dashboard() {
                   >
                     <Popup>
                       <div className="text-xs space-y-1 min-w-[200px]">
+                        <p>
+                          <span className={`font-bold px-1.5 py-0.5 rounded ${pickupBadgeClassName(pickup.key)}`}>
+                            {pickup.shortLabel}
+                          </span>
+                        </p>
+                        <p className="text-gray-600 leading-snug">{pickup.detail}</p>
                         <p className="font-bold">{s.density_label} — {s.debris_type?.replace('_', ' ')}</p>
                         <p className="text-gray-600">{s.gemini_analysis?.slice(0, 120)}...</p>
                         <p className="text-gray-500">By: {s.reporter_name}</p>
@@ -468,6 +514,8 @@ export default function Dashboard() {
           <div className="absolute bottom-4 left-4 bg-slate-900 bg-opacity-90 rounded-xl p-3 text-xs space-y-1 z-[1000] min-w-[200px] pointer-events-none">
             <p className="text-slate-400 font-semibold mb-1">Drift forecast</p>
             <p className="text-slate-500 leading-snug mb-1">Track follows surface current; clipped at shore — not inland.</p>
+            <p className="text-slate-500 leading-snug mb-1">Sightings on land (Pacific model) are hidden from the map.</p>
+            <p className="text-slate-500 leading-snug mb-1">Badges: Land / Ship / Ship+coast use drift + shoreline (same as report pipeline).</p>
             <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-yellow-400" /><span className="text-slate-300">24h</span></div>
             <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-orange-500" /><span className="text-slate-300">48h</span></div>
             <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-red-500" /><span className="text-slate-300">72h</span></div>
@@ -491,7 +539,7 @@ export default function Dashboard() {
               <button key={t} onClick={() => setActiveTab(t)}
                 className={`flex-1 py-2 text-xs font-medium capitalize transition-colors ${activeTab === t ? 'border-b-2 border-cyan-500 text-cyan-400' : 'text-slate-400 hover:text-slate-200'}`}>
                 {t}
-                {t === 'sightings' && sightings.length > 0 && <span className="ml-1 bg-slate-700 px-1 rounded">{sightings.length}</span>}
+                {t === 'sightings' && visibleSightings.length > 0 && <span className="ml-1 bg-slate-700 px-1 rounded">{visibleSightings.length}</span>}
                 {t === 'supplies' && lowSupplies.length > 0 && <span className="ml-1 bg-red-700 text-white px-1 rounded">{lowSupplies.length}</span>}
               </button>
             ))}
@@ -562,8 +610,19 @@ export default function Dashboard() {
               </div>
             )}
 
-            {activeTab === 'sightings' && sightings.map((s) => {
+            {activeTab === 'sightings' && visibleSightings.map((s) => {
               const drift = getDrift(s.id);
+              const driftForPickup = drift
+                ? {
+                  lat_24h: drift.lat_24h,
+                  lon_24h: drift.lon_24h,
+                  lat_48h: drift.lat_48h,
+                  lon_48h: drift.lon_48h,
+                  lat_72h: drift.lat_72h,
+                  lon_72h: drift.lon_72h,
+                }
+                : null;
+              const pickup = classifyPickupMode(s.latitude, s.longitude, driftForPickup);
               const lfSide = drift ? computePacificLandfallDisplay(s.latitude, s.longitude, drift) : null;
               const isSelected = selectedSightingId === s.id;
               return (
@@ -575,6 +634,11 @@ export default function Dashboard() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${pickupBadgeClassName(pickup.key)}`} title={pickup.detail}>
+                          {pickup.shortLabel}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${densityBadge(s.density_score, s.density_label)}`}>
                           {s.density_label} {s.density_score}/10

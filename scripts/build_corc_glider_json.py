@@ -11,11 +11,16 @@ Usage:
 
 Output: clearer/public/data/corc_glider_index.json
 """
+import hashlib
 import json
 import os
 import sys
+import time
 
 import numpy as np
+
+# Skip near-stagnant samples (bearing is ill-defined when speed ~ 0).
+SPEED_MS_MIN = 1e-5
 
 
 def main():
@@ -63,6 +68,8 @@ def main():
     profiles = []
     for i in idx:
         speed_ms = float(np.hypot(u[i], v[i]))
+        if speed_ms < SPEED_MS_MIN:
+            continue
         br = (np.degrees(np.arctan2(u[i], v[i])) + 360) % 360
         profiles.append(
             {
@@ -76,13 +83,27 @@ def main():
             }
         )
 
+    with open(nc_path, "rb") as bf:
+        source_sha256 = hashlib.sha256(bf.read()).hexdigest()[:16]
+
     out = {
         "meta": {
             "id": "CORC",
             "description": "Spray glider depth-mean velocity (CORC). Nearest profile within max_km informs drift.",
             "source_file": os.path.basename(nc_path),
+            "source_sha256_prefix": source_sha256,
             "profiles_indexed": len(profiles),
-            "note": "Subsampled for web bundle size.",
+            "note": "Subsampled for web bundle size; near-stagnant samples (speed < 1e-5 m/s) omitted.",
+            "build_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "bearing_convention": (
+                "bearing_deg is direction the current flows toward, degrees clockwise from north (0=N, 90=E); "
+                "computed as atan2(u, v) with u eastward and v northward (m/s)."
+            ),
+            "units": {
+                "u_ms": "m/s eastward",
+                "v_ms": "m/s northward",
+                "speed_knots": "1.94384 m/s per knot (approx)",
+            },
         },
         "max_km_glider_priority": 120,
         "profiles": profiles,

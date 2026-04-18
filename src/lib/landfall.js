@@ -19,6 +19,20 @@ export function isNortheastPacificShorelineModel(lat, lon) {
   return lon <= -65;
 }
 
+/**
+ * Baja / northern mainland Pacific: piecewise coast longitude (replaces a single straight
+ * segment in lat–lon from ~22°N to 32°N, which mis-modeled the bend near San Diego).
+ */
+const COAST_KNOTS_BAJA = [
+  [22.0, -110.35],
+  [24.0, -111.75],
+  [26.0, -113.15],
+  [28.0, -114.45],
+  [30.0, -115.85],
+  [31.5, -116.65],
+  [32.0, -117.25],
+];
+
 /** [lat°N, coastLon°E] — open Pacific edge (more negative = farther west). */
 const COAST_KNOTS = [
   [32.0, -117.25],
@@ -40,11 +54,24 @@ const COAST_KNOTS = [
   [48.0, -125.0],
 ];
 
-function outerPacificCoastLon(lat) {
-  if (lat < COAST_KNOTS[0][0] || lat > COAST_KNOTS[COAST_KNOTS.length - 1][0]) {
-    if (lat >= 22 && lat < COAST_KNOTS[0][0]) {
-      return -110.4 - (lat - 22) * (COAST_KNOTS[0][1] + 110.4) / (COAST_KNOTS[0][0] - 22);
+function interpolateCoastLon(knots, lat) {
+  if (lat < knots[0][0] || lat > knots[knots.length - 1][0]) return null;
+  for (let i = 0; i < knots.length - 1; i += 1) {
+    const [la, lo] = knots[i];
+    const [lb, lom] = knots[i + 1];
+    if (lat >= la && lat <= lb) {
+      const t = (lat - la) / (lb - la);
+      return lo + t * (lom - lo);
     }
+  }
+  return knots[knots.length - 1][1];
+}
+
+function outerPacificCoastLon(lat) {
+  if (lat >= 22 && lat < 32) {
+    return interpolateCoastLon(COAST_KNOTS_BAJA, lat);
+  }
+  if (lat < COAST_KNOTS[0][0] || lat > COAST_KNOTS[COAST_KNOTS.length - 1][0]) {
     return null;
   }
   for (let i = 0; i < COAST_KNOTS.length - 1; i += 1) {
@@ -73,6 +100,11 @@ function isRoughlyMontereyBayWater(lat, lon) {
   return lat >= 36.45 && lat <= 36.95 && lon >= -122.12 && lon <= -121.68;
 }
 
+/** San Diego / northern Baja nearshore: open water east of the simplified outer-coast lon (bay + inner shelf). */
+function isRoughlySanDiegoBightWater(lat, lon) {
+  return lat >= 32.35 && lat <= 33.05 && lon >= -118.1 && lon <= -117.0;
+}
+
 /**
  * True if we treat the point as open water for drawing drift (west of shoreline,
  * or inside coarse bay boxes — not Central Valley inland).
@@ -81,10 +113,31 @@ export function isSeawardOfCoast(lat, lon) {
   if (isCentralCaliforniaInland(lat, lon)) return false;
   if (isRoughlySFBayWater(lat, lon)) return true;
   if (isRoughlyMontereyBayWater(lat, lon)) return true;
+  if (isRoughlySanDiegoBightWater(lat, lon)) return true;
 
   const cl = outerPacificCoastLon(lat);
   if (cl == null) return true;
   return lon < cl - 0.03;
+}
+
+/**
+ * True if the point is inland / onshore in the NE Pacific shoreline heuristic (not open water).
+ * Outside that model (e.g. Asia, Atlantic), returns false — we do not block those reports here.
+ */
+export function isOnLandInPacificModel(lat, lon) {
+  if (!isNortheastPacificShorelineModel(lat, lon)) return false;
+  return !isSeawardOfCoast(lat, lon);
+}
+
+/**
+ * Map / ops queue: show only water positions in the NE Pacific coastal model.
+ * On-land or invalid coordinates are omitted from the dashboard map and list.
+ */
+export function shouldShowSightingOnDashboard(lat, lon) {
+  if (lat == null || lon == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) {
+    return false;
+  }
+  return !isOnLandInPacificModel(Number(lat), Number(lon));
 }
 
 /**

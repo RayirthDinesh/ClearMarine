@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { formatCoordPair } from '../lib/coords';
+import { labelForPickupKey, pickupBadgeClassName } from '../lib/pickupClassification';
 
 const STATUS_OPTIONS = ['available', 'deployed', 'returning', 'maintenance'];
 
@@ -180,6 +181,13 @@ export default function VesselStation() {
                 <p className="text-white font-semibold text-sm">
                   {assignment.debris_sightings.density_label} {assignment.debris_sightings.debris_type?.replace('_', ' ')} cluster
                 </p>
+                {assignment.debris_sightings.pickup_mode && (
+                  <p className="mt-1.5">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded border ${pickupBadgeClassName(assignment.debris_sightings.pickup_mode)}`}>
+                      {labelForPickupKey(assignment.debris_sightings.pickup_mode)}
+                    </span>
+                  </p>
+                )}
                 <p className="text-slate-300 text-xs mt-1">{assignment.debris_sightings.gemini_analysis?.slice(0, 100)}...</p>
               </div>
             )}
