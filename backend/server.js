@@ -20,6 +20,13 @@ const MODEL_ID = 'marine-trash-detection/2';
 /** Default premade voice (Rachel). Override with ELEVENLABS_VOICE_ID from your ElevenLabs Voices page. */
 /** Multilingual v2 works with default premade voices; override if your account requires another model. */
 
+function elevenLabsUpstreamMessage(payload, fallback) {
+  if (payload == null || typeof payload !== 'object') return fallback;
+  const d = payload.detail;
+  if (d && typeof d === 'object' && typeof d.message === 'string') return d.message;
+  return fallback;
+}
+
 function cfg() {
   return {
     ROBOFLOW_API_KEY: process.env.ROBOFLOW_API_KEY,
@@ -35,7 +42,10 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-app.get('/health', (_req, res) => {
+/** Same routes at `/` (local npm run start:api) and `/api` (Vercel — browser uses same-origin /api/...). */
+const routes = express.Router();
+
+routes.get('/health', (_req, res) => {
   const conf = cfg();
   res.json({
     ok: true,
@@ -45,11 +55,11 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.get('/', (_req, res) => {
+routes.get('/', (_req, res) => {
   res.json({
     ok: true,
     service: 'clearmarine-api',
-    message: 'POST /detect (Roboflow), POST /transcribe (multipart file), POST /tts JSON { text } (ElevenLabs TTS).',
+    message: 'POST /detect (Roboflow), POST /transcribe (multipart file), POST /tts JSON { text } (ElevenLabs TTS). Same paths under /api on Vercel.',
   });
 });
 
@@ -70,7 +80,7 @@ function getBase64FromRequest(req) {
   return '';
 }
 
-app.post('/detect', upload.single('image'), async (req, res) => {
+routes.post('/detect', upload.single('image'), async (req, res) => {
   try {
     const conf = cfg();
     if (!conf.ROBOFLOW_API_KEY) {
@@ -120,7 +130,7 @@ app.post('/detect', upload.single('image'), async (req, res) => {
  * ElevenLabs Speech-to-Text (Scribe) — multipart field "file".
  * Docs: POST https://api.elevenlabs.io/v1/speech-to-text
  */
-app.post('/transcribe', upload.single('file'), async (req, res) => {
+routes.post('/transcribe', upload.single('file'), async (req, res) => {
   try {
     const conf = cfg();
     if (!conf.ELEVENLABS_KEY) {
@@ -130,10 +140,15 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No audio file. Send multipart field "file".' });
     }
 
+    let uploadName = req.file.originalname || 'recording.webm';
+    const mime = req.file.mimetype || '';
+    if (/mp4|m4a/i.test(mime) && !/\.m4a$/i.test(uploadName)) uploadName = 'recording.m4a';
+    else if (/webm/i.test(mime) && !/\.webm$/i.test(uploadName)) uploadName = 'recording.webm';
+
     const fd = new FormData();
     fd.append('file', req.file.buffer, {
-      filename: req.file.originalname || 'recording.webm',
-      contentType: req.file.mimetype || 'application/octet-stream',
+      filename: uploadName,
+      contentType: mime || 'application/octet-stream',
     });
     fd.append('model_id', conf.ELEVENLABS_STT_MODEL);
     if (conf.ELEVENLABS_STT_LANGUAGE) {
@@ -157,11 +172,13 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
     return res.json({ ok: true, text, model_id: conf.ELEVENLABS_STT_MODEL });
   } catch (err) {
     const status = err.response?.status || 500;
+    const upstream = err.response?.data;
+    const msg = elevenLabsUpstreamMessage(upstream, err.message || 'ElevenLabs transcription failed');
     // eslint-disable-next-line no-console
-    console.warn('[elevenlabs-stt] error', status, err.response?.data || err.message);
+    console.warn('[elevenlabs-stt] error', status, upstream || err.message);
     return res.status(status).json({
       ok: false,
-      error: err.response?.data || err.message || 'ElevenLabs transcription failed',
+      error: msg,
     });
   }
 });
@@ -170,7 +187,7 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
  * ElevenLabs text-to-speech — JSON body { "text": "..." } returns audio/mpeg.
  * https://elevenlabs.io/docs/api-reference/text-to-speech
  */
-app.post('/tts', async (req, res) => {
+routes.post('/tts', async (req, res) => {
   try {
     const conf = cfg();
     if (!conf.ELEVENLABS_KEY) {
@@ -223,6 +240,9 @@ app.post('/tts', async (req, res) => {
     });
   }
 });
+
+app.use('/', routes);
+app.use('/api', routes);
 
 module.exports = app;
 

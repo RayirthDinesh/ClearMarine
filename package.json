@@ -2,8 +2,8 @@
   "name": "clearer",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:8787",
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.103.3",
     "@tensorflow-models/coco-ssd": "^2.2.3",
     "@tensorflow/tfjs": "^4.22.0",

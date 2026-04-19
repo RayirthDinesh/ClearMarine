@@ -35,11 +35,11 @@ export default function ReportDebris() {
   const [voicePhase, setVoicePhase] = useState('idle');
   const [voiceError, setVoiceError] = useState('');
   const [voiceTranscript, setVoiceTranscript] = useState('');
-  /** Last spoken / shown clarification from assistant (ElevenLabs TTS + Gemini copy). */
+  /** Last spoken / shown clarification from assistant (ElevenLabs TTS + Groq copy). */
   const [voiceAssistantLine, setVoiceAssistantLine] = useState('');
   /** When autoplay is blocked, play TTS after a tap (same object URL until played). */
   const [ttsTapUrl, setTtsTapUrl] = useState(null);
-  /** Field keys Gemini marked empty or low-confidence (for on-screen hint). */
+  /** Field keys Groq marked empty or low-confidence (for on-screen hint). */
   const [voiceFieldsPending, setVoiceFieldsPending] = useState([]);
   const photoRef = useRef(null);
   const structuredRef = useRef({
@@ -225,7 +225,7 @@ export default function ReportDebris() {
         }
         setVoicePhase('processing');
         try {
-          const text = await transcribeAudioBlob(blob, 'recording.webm');
+          const text = await transcribeAudioBlob(blob);
           setVoiceTranscript(text);
           setNotes((prev) => {
             const base = (prev || '').trimEnd();
@@ -247,7 +247,7 @@ export default function ReportDebris() {
 
           if (inferred.infer_skipped !== 'parse_error') {
             if (inferred.waste_type) setWasteType(inferred.waste_type);
-            if (inferred.infer_skipped !== 'no_gemini') {
+            if (inferred.infer_skipped !== 'no_groq') {
               setSizeCategory(inferred.size_category ?? '');
               setQuantityBand(inferred.quantity_band ?? '');
               setSpreadLayout(inferred.spread_layout ?? '');
@@ -264,9 +264,9 @@ export default function ReportDebris() {
             });
           }
 
-          if (inferred.infer_skipped === 'no_gemini') {
+          if (inferred.infer_skipped === 'no_groq') {
             setVoiceError(
-              'Voice cannot fill the sighting fields without Gemini. Add REACT_APP_GEMINI_API_KEY to the root .env, then stop and run npm start again.',
+              'Voice cannot fill the sighting fields without Groq. Add REACT_APP_GROQ_API_KEY to the root .env, then stop and run npm start again.',
             );
           } else if (inferred.infer_skipped === 'parse_error') {
             setVoiceError(
@@ -275,7 +275,7 @@ export default function ReportDebris() {
           }
 
           const fallbackAsk = 'Could you briefly say what kind of debris it is, how large it is, and about how many pieces or how wide the area is?';
-          const ask = inferred.infer_skipped === 'no_gemini'
+          const ask = inferred.infer_skipped === 'no_groq'
             ? ''
             : inferred.report_ready
               ? ''
@@ -304,7 +304,8 @@ export default function ReportDebris() {
           setVoicePhase('error');
         }
       };
-      mr.start(250);
+      /* Single blob at stop avoids truncated WebM clusters (fixes ElevenLabs invalid_audio). */
+      mr.start();
       setVoicePhase('recording');
     } catch (e) {
       setVoiceError(e.message || 'Could not access microphone');
@@ -315,6 +316,11 @@ export default function ReportDebris() {
   const stopVoiceRecording = useCallback(() => {
     const mr = mediaRecorderRef.current;
     if (mr && mr.state === 'recording') {
+      try {
+        mr.requestData();
+      } catch (_) {
+        /* ignore */
+      }
       mr.stop();
       return;
     }
@@ -414,7 +420,7 @@ export default function ReportDebris() {
         : '';
       const impactResponderBlock = [
         analysis.impact_threat_score != null
-          && `Impact / threat (Gemini): ${analysis.impact_threat_score}/10${analysis.impact_threat_label ? ` (${analysis.impact_threat_label})` : ''}${analysis.threat_rationale ? ` — ${analysis.threat_rationale}` : ''}`,
+          && `Impact / threat (Groq): ${analysis.impact_threat_score}/10${analysis.impact_threat_label ? ` (${analysis.impact_threat_label})` : ''}${analysis.threat_rationale ? ` — ${analysis.threat_rationale}` : ''}`,
         analysis.responder_report && `Responder brief:\n${analysis.responder_report}`,
       ].filter(Boolean).join('\n\n');
 
@@ -572,7 +578,7 @@ export default function ReportDebris() {
             )}
             {result.analysis.impact_threat_score != null && (
               <div className="rounded-lg p-3 space-y-1" style={{ background: 'rgba(0,212,255,0.06)', border: '1px solid rgba(0,212,255,0.25)' }}>
-                <p className="mono text-[10px] tracking-widest" style={{ color: 'var(--cyan-glow)' }}>IMPACT / THREAT (GEMINI · CORC + VOICE + FIELDS)</p>
+                <p className="mono text-[10px] tracking-widest" style={{ color: 'var(--cyan-glow)' }}>IMPACT / THREAT (GROQ · CORC + VOICE + FIELDS)</p>
                 <p className="mono text-sm" style={{ color: 'var(--text-primary)' }}>
                   {result.analysis.impact_threat_score}/10
                   {result.analysis.impact_threat_label ? (
@@ -586,7 +592,7 @@ export default function ReportDebris() {
             )}
             {result.analysis.responder_report && (
               <div className="rounded-lg p-3" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)' }}>
-                <p className="mono text-[10px] tracking-widest mb-1" style={{ color: 'var(--green-ok)' }}>RESPONDER BRIEF (GEMINI)</p>
+                <p className="mono text-[10px] tracking-widest mb-1" style={{ color: 'var(--green-ok)' }}>RESPONDER BRIEF (GROQ)</p>
                 <p className="text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>{result.analysis.responder_report}</p>
               </div>
             )}
@@ -961,7 +967,7 @@ export default function ReportDebris() {
             <p className="mono text-[10px] mt-1 glow-pulse" style={{ color: 'var(--red-crit)' }}>● RECORDING…</p>
           )}
           {voicePhase === 'processing' && (
-            <p className="mono text-[10px] mt-1" style={{ color: 'var(--cyan-glow)' }}>● TRANSCRIBING · FIELD MAP (ElevenLabs + Gemini)…</p>
+            <p className="mono text-[10px] mt-1" style={{ color: 'var(--cyan-glow)' }}>● TRANSCRIBING · FIELD MAP (ElevenLabs + Groq)…</p>
           )}
           {voicePhase === 'speaking' && (
             <p className="mono text-[10px] mt-1 glow-pulse" style={{ color: 'var(--cyan-glow)' }}>● ASSISTANT (ElevenLabs TTS)…</p>

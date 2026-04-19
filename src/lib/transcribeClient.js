@@ -8,10 +8,40 @@ function getBackendBase() {
   return '/api';
 }
 
+/** Clear message when fetch fails (often backend not running locally or wrong URL in prod). */
+function voiceNetworkErrorHint(path, cause) {
+  const base = getBackendBase();
+  const host = typeof window !== 'undefined' ? window.location?.hostname : '';
+  const isLocalRelative = (host === 'localhost' || host === '127.0.0.1') && base.startsWith('/');
+  const bits = [
+    `Could not reach voice API (${base}${path}).`,
+    isLocalRelative
+      ? 'Start the API in another terminal: npm run start:api (listens on port 8787). CRA proxies /api → that server.'
+      : 'On Vercel: confirm ELEVENLABS_KEY is set and redeploy; open /api/health to verify.',
+  ];
+  if (cause && String(cause).trim()) bits.push(String(cause).slice(0, 120));
+  return bits.join(' ');
+}
+
+/** Filename must match container (ElevenLabs rejects e.g. webm bytes named .webm mismatch with mp4). */
+export function guessAudioFilename(blob) {
+  const raw = (blob && blob.type ? blob.type : '').split(';')[0].trim().toLowerCase();
+  if (raw === 'audio/webm') return 'recording.webm';
+  if (raw === 'audio/mp4' || raw === 'audio/x-m4a') return 'recording.m4a';
+  if (raw === 'audio/mp3' || raw === 'audio/mpeg') return 'recording.mp3';
+  if (raw === 'audio/ogg') return 'recording.ogg';
+  if (raw === 'audio/wav') return 'recording.wav';
+  if (raw.startsWith('audio/')) return `recording.${raw.replace(/^audio\//, '').split('+')[0]}`;
+  return 'recording.webm';
+}
+
 function stringifyTranscribeError(err) {
   if (err == null) return '';
   if (typeof err === 'string') return err;
   if (typeof err === 'object') {
+    /** ElevenLabs-style: { detail: { message, code } } */
+    const det = err.detail;
+    if (det && typeof det === 'object' && typeof det.message === 'string') return det.message;
     if (typeof err.message === 'string') return err.message;
     try {
       return JSON.stringify(err);
@@ -70,11 +100,16 @@ export async function speakAloud(text, options = {}) {
   }
 
   try {
-    const res = await fetch(`${base}/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: trimmed }),
-    });
+    let res;
+    try {
+      res = await fetch(`${base}/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmed }),
+      });
+    } catch (netErr) {
+      return { ok: false, error: voiceNetworkErrorHint('/tts', netErr) };
+    }
 
     const ct = res.headers.get('Content-Type') || '';
     if (!res.ok) {
@@ -141,11 +176,17 @@ export async function speakTextWithElevenLabs(text) {
   return speakAloud(text, { preferElevenLabs: true, webSpeechFallback: true });
 }
 
-export async function transcribeAudioBlob(blob, filename = 'recording.webm') {
+export async function transcribeAudioBlob(blob, filename) {
   const base = getBackendBase();
+  const name = filename || guessAudioFilename(blob);
   const fd = new FormData();
-  fd.append('file', blob, filename);
-  const res = await fetch(`${base}/transcribe`, { method: 'POST', body: fd });
+  fd.append('file', blob, name);
+  let res;
+  try {
+    res = await fetch(`${base}/transcribe`, { method: 'POST', body: fd });
+  } catch (netErr) {
+    throw new Error(voiceNetworkErrorHint('/transcribe', netErr));
+  }
   const rawText = await res.text();
   let data = {};
   try {
@@ -154,7 +195,12 @@ export async function transcribeAudioBlob(blob, filename = 'recording.webm') {
     data = { error: rawText?.slice(0, 500) || 'Invalid JSON from transcribe endpoint' };
   }
   if (!res.ok) {
-    const msg = stringifyTranscribeError(data.error) || rawText?.slice(0, 300) || `Transcription failed (${res.status})`;
+    const nested = data.error ?? data;
+    const msg =
+      stringifyTranscribeError(nested)
+      || stringifyTranscribeError(data)
+      || rawText?.slice(0, 300)
+      || `Transcription failed (${res.status})`;
     throw new Error(msg);
   }
   const text = typeof data.text === 'string' ? data.text.trim() : '';

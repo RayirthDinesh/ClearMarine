@@ -66,8 +66,8 @@ export function reportSignalStrength(reporterStructured) {
 }
 
 /**
- * Apply LLM-first fusion to Gemini reconciliation output. Does not reduce severity when CV is empty.
- * @param {object} raw - parsed JSON from Gemini
+ * Apply LLM-first fusion to Groq reconciliation output. Does not reduce severity when CV is empty.
+ * @param {object} raw - parsed JSON from Groq
  * @param {object} pipeline - runMarineDebrisPipeline result (must include detection + cvDetected)
  * @param {object|null} reporterStructured
  * @returns {object} patched raw with confidence + agreement_level adjusted

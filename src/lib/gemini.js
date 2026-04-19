@@ -1,8 +1,8 @@
 /**
- * Debris + ops LLM helpers. Current stack: Gemini text in-process
+ * Debris + ops LLM helpers. Current stack: Groq in-process
  * (ElevenLabs STT lives on the backend).
  */
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 import { runMarineDebrisPipeline } from './debrisPipeline';
 import { applyLlmFirstSignalFusion } from './reconcileSignals';
 import { numericConfidenceToCategory, scoreToDensityLabel } from './severityUtils';
@@ -34,7 +34,7 @@ function formatReporterStructuredBlock(s) {
   return `Structured reporter input (form selections — reconcile with CV and any VISION_PRIOR; not ground truth for species or scale if the photo contradicts them):\n${lines.join('\n')}\n`;
 }
 
-/** ElevenLabs STT verbatim slice for Gemini prompts (same transcript also merged into impact JSON). */
+/** ElevenLabs STT verbatim slice for Groq prompts (same transcript also merged into impact JSON). */
 function formatVoiceTranscriptForPrompt(voiceTranscript) {
   const v = String(voiceTranscript || '').trim().replace(/\s+/g, ' ');
   if (!v) return '';
@@ -49,60 +49,78 @@ Treat this as first-class evidence alongside structured fields and typed notes: 
 `;
 }
 
-const gemini = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || '');
+const groq = new Groq({
+  apiKey: process.env.REACT_APP_GROQ_API_KEY,
+  dangerouslyAllowBrowser: true,
+});
 
-/** Primary text model override: REACT_APP_GEMINI_TEXT_MODEL */
+/** Primary text model — override: REACT_APP_GROQ_TEXT_MODEL */
 const TEXT_MODEL_PRIMARY =
-  process.env.REACT_APP_GEMINI_TEXT_MODEL || 'gemini-2.5-flash';
+  process.env.REACT_APP_GROQ_TEXT_MODEL || 'llama-3.1-8b-instant';
 
-/** Fallback chain for Gemini text models (keep to current v1beta IDs). */
-const TEXT_FALLBACK_FLASH = 'gemini-2.5-flash';
-const TEXT_FALLBACK_FLASH_2_0 = 'gemini-2.0-flash';
-const TEXT_FALLBACK_FLASH_LITE_2_0 = 'gemini-2.0-flash-lite';
+/** Fallbacks — see https://console.groq.com/docs/deprecations */
+const TEXT_FALLBACK_8B = 'llama-3.1-8b-instant';
+const TEXT_FALLBACK_70B = 'llama-3.3-70b-versatile';
+const TEXT_FALLBACK_GPT_OSS = 'openai/gpt-oss-120b';
 
 function textModelFallbackChain() {
   const primary = TEXT_MODEL_PRIMARY;
-  const rest = [TEXT_FALLBACK_FLASH, TEXT_FALLBACK_FLASH_2_0, TEXT_FALLBACK_FLASH_LITE_2_0];
+  const rest =
+    primary.includes('70b') || primary.includes('gpt-oss')
+      ? [TEXT_FALLBACK_8B, TEXT_FALLBACK_GPT_OSS]
+      : [TEXT_FALLBACK_70B, TEXT_FALLBACK_8B, TEXT_FALLBACK_GPT_OSS];
   return [primary, ...rest].filter((m, i, a) => m && a.indexOf(m) === i);
 }
 
-/** Stronger default chain for voice → form mapping only. Override: REACT_APP_GEMINI_VOICE_INFER_MODEL */
+/** Voice → form mapping — override: REACT_APP_GROQ_VOICE_INFER_MODEL */
 function voiceInferModelFallbackChain() {
-  const primary = process.env.REACT_APP_GEMINI_VOICE_INFER_MODEL || TEXT_MODEL_PRIMARY;
-  const rest = [TEXT_FALLBACK_FLASH_2_0, TEXT_FALLBACK_FLASH_LITE_2_0];
+  const primary = process.env.REACT_APP_GROQ_VOICE_INFER_MODEL || TEXT_FALLBACK_70B;
+  const rest =
+    primary.includes('70b') || primary.includes('gpt-oss')
+      ? [TEXT_FALLBACK_8B, TEXT_FALLBACK_GPT_OSS]
+      : [TEXT_FALLBACK_70B, TEXT_FALLBACK_8B, TEXT_FALLBACK_GPT_OSS];
   return [primary, ...rest].filter((m, i, a) => m && a.indexOf(m) === i);
 }
 
-function toGeminiPrompt(messages) {
-  if (!Array.isArray(messages) || messages.length === 0) return '';
-  return messages
-    .map((m) => String(m?.content || '').trim())
-    .filter(Boolean)
-    .join('\n\n');
-}
-
-async function llmTextCompletion(messages, options = {}) {
+async function groqTextCompletion(messages, options = {}) {
   const { responseFormatJson, modelChain } = options;
   const chain = Array.isArray(modelChain) && modelChain.length ? modelChain : textModelFallbackChain();
-  const prompt = toGeminiPrompt(messages);
-  if (!prompt) throw new Error('No prompt content provided');
   let lastErr;
   for (let i = 0; i < chain.length; i += 1) {
     const model = chain[i];
+    const baseParams = { model, messages };
+    const tryCreate = async (withJson) => {
+      const params = { ...baseParams };
+      if (withJson && responseFormatJson) {
+        params.response_format = { type: 'json_object' };
+      }
+      return groq.chat.completions.create(params);
+    };
     try {
-      const modelClient = gemini.getGenerativeModel({ model });
-      const result = await modelClient.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: responseFormatJson ? { responseMimeType: 'application/json' } : undefined,
-      });
-      const content = result?.response?.text?.() || '';
-      return { choices: [{ message: { content } }] };
+      if (responseFormatJson) {
+        try {
+          return await tryCreate(true);
+        } catch (e) {
+          const status = e?.status;
+          const msg = String(e?.message || e?.error?.message || '');
+          if (status === 400 && /response_format|json/i.test(msg)) {
+            return await tryCreate(false);
+          }
+          throw e;
+        }
+      }
+      return await tryCreate(false);
     } catch (e) {
       lastErr = e;
+      const code = e?.code || e?.error?.code;
+      const status = e?.status;
       const msg = String(e?.message || e?.error?.message || '');
-      const isRetryable =
-        /rate|quota|429|model|not found|unsupported|overloaded|unavailable|500|503/i.test(msg);
-      if (isRetryable && i < chain.length - 1) continue;
+      const isRate = status === 429 || code === 'rate_limit_exceeded';
+      const isDeadModel =
+        status === 400 &&
+        (code === 'model_decommissioned' ||
+          /decommissioned|no longer supported/i.test(msg));
+      if ((isRate || isDeadModel) && i < chain.length - 1) continue;
       throw e;
     }
   }
@@ -283,7 +301,7 @@ export async function inferVoiceReportFieldsFromTranscript(transcript, opts = {}
     infer_skipped: null,
     fields_needing_clarification: [],
   };
-  if (!process.env.REACT_APP_GEMINI_API_KEY) return { ...empty, infer_skipped: 'no_gemini' };
+  if (!process.env.REACT_APP_GROQ_API_KEY) return { ...empty, infer_skipped: 'no_groq' };
   const t = String(transcript || '').trim();
   if (!t) return empty;
 
@@ -350,7 +368,7 @@ Return this JSON shape:
 {"waste_type":"","size_category":"","quantity_band":"","spread_layout":"","supplemental_notes":"","confidence":{"waste_type":"high","size_category":"high","quantity_band":"high","spread_layout":"none"},"fields_needing_clarification":[],"clarification_speech":null}`;
 
   try {
-    const response = await llmTextCompletion(
+    const response = await groqTextCompletion(
       [{ role: 'user', content: prompt }],
       { responseFormatJson: true, modelChain: voiceInferModelFallbackChain() },
     );
@@ -447,7 +465,7 @@ Return this JSON shape:
   }
 }
 
-const GEMINI_IMPACT_JSON_RULES = `Return ONLY valid JSON (no markdown) with exactly:
+const GROQ_IMPACT_JSON_RULES = `Return ONLY valid JSON (no markdown) with exactly:
 {
   "impact_threat_score": <integer 1-10>,
   "impact_threat_label": "Low" | "Moderate" | "High" | "Critical",
@@ -459,10 +477,10 @@ impact_threat_score must explicitly reflect waste type, scale (structured + note
 responder_report must be a single condensed operational brief (not bullet labels in JSON — plain sentences).`;
 
 /**
- * Second-pass Gemini assessment: typed notes + ElevenLabs voice transcript + CORC + prior fused scores
+ * Second-pass Groq assessment: typed notes + ElevenLabs voice transcript + CORC + prior fused scores
  * → quantified impact_threat_score + responder_report (primary LLM for this step).
  */
-async function mergeMarineReportWithGeminiImpact({
+async function mergeMarineReportWithGroqImpact({
   latitude,
   longitude,
   reporterStructured,
@@ -471,7 +489,7 @@ async function mergeMarineReportWithGeminiImpact({
   analysis,
   pipeline,
 }) {
-  if (!process.env.REACT_APP_GEMINI_API_KEY || !analysis) return analysis;
+  if (!process.env.REACT_APP_GROQ_API_KEY || !analysis) return analysis;
 
   let corc = null;
   try {
@@ -507,7 +525,7 @@ async function mergeMarineReportWithGeminiImpact({
       : null,
   };
 
-  const prompt = `You are ClearMarine's impact and threat assessor for ocean debris and spill response. This pass runs on Gemini (text model).
+  const prompt = `You are ClearMarine's impact and threat assessor for ocean debris and spill response. This pass runs on Groq (text model).
 
 You receive ONE JSON object with: coordinates, structured reporter fields (waste type, size, quantity, spread), typed_field_notes, voice_transcription (ElevenLabs Scribe STT when the reporter used voice — may duplicate phrases in typed_field_notes), corc_glider_context (nearest precomputed CORC/Spray-style current profile when available), prior_assessment from the first-pass debris model, and optional CV bbox counts (not raw pixels).
 
@@ -517,13 +535,13 @@ You must output:
 (a) impact_threat_score — single integer 1–10 quantifying operational threat (entanglement, wildlife risk, navigation, chemical/oil severity, spread potential given currents, urgency from voice or notes).
 (b) responder_report — condensed plain-language brief for field responders (what to expect, priorities, how currents may move material).
 
-${GEMINI_IMPACT_JSON_RULES}
+${GROQ_IMPACT_JSON_RULES}
 
 INPUT JSON:
 ${JSON.stringify(payload, null, 2)}`;
 
   try {
-    const response = await llmTextCompletion([{ role: 'user', content: prompt }]);
+    const response = await groqTextCompletion([{ role: 'user', content: prompt }]);
     const parsed = extractJSON(response.choices[0].message.content);
     const score = Number(parsed.impact_threat_score);
     const impact_threat_score = Number.isFinite(score)
@@ -538,7 +556,7 @@ ${JSON.stringify(payload, null, 2)}`;
     };
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.warn('Gemini impact assessment skipped:', e?.message || e);
+    console.warn('Groq impact assessment skipped:', e?.message || e);
     return analysis;
   }
 }
@@ -896,7 +914,7 @@ function mapReconciliationToLegacy(raw, pipeline, reporterStructured = null) {
 }
 
 /**
- * Photo path: in-browser COCO-SSD pipeline JSON + structured dropdowns + notes → Gemini reconciliation JSON.
+ * Photo path: in-browser COCO-SSD pipeline JSON + structured dropdowns + notes → Groq reconciliation JSON.
  * (No separate vision LLM — empty CV frames rely on reporter fields + notes.)
  */
 export async function analyzeDebrisPhoto(
@@ -993,7 +1011,7 @@ Produce full reconciliation JSON including approximate_size, quantity_estimate, 
 
 ${RECONCILIATION_OUTPUT_SCHEMA}`;
 
-  const response = await llmTextCompletion([{ role: 'user', content: prompt }]);
+  const response = await groqTextCompletion([{ role: 'user', content: prompt }]);
   let parsed = extractJSON(response.choices[0].message.content);
   const { parsed: merged, applied: visionApplied } = applyVisionPriorToReconciliation(
     parsed,
@@ -1004,7 +1022,7 @@ ${RECONCILIATION_OUTPUT_SCHEMA}`;
   parsed = enforcePerClassCvAttribution(parsed, pipeline);
   parsed = enforceEmptyCvConsistency(parsed, pipeline, { visualPriorApplied: visionApplied });
   let legacy = mapReconciliationToLegacy(parsed, pipeline, reporterStructured);
-  legacy = await mergeMarineReportWithGeminiImpact({
+  legacy = await mergeMarineReportWithGroqImpact({
     latitude,
     longitude,
     reporterStructured,
@@ -1106,12 +1124,12 @@ Use every detail they gave — including any VOICE_TRANSCRIPT block below (Eleve
 ${voicePromptSection}
 ${DEBRIS_JSON_SCHEMA}`;
 
-  const response = await llmTextCompletion([{ role: 'user', content: prompt }]);
+  const response = await groqTextCompletion([{ role: 'user', content: prompt }]);
   let parsed = extractJSON(response.choices[0].message.content);
   const combinedForHeuristic = `${raw}\n${String(voiceTranscript || '').trim()}`.trim();
   parsed = applyTextNotesHeuristic(combinedForHeuristic, parsed, reporterStructured);
   let out = normalizeDebrisAnalysis(parsed, reporterStructured);
-  out = await mergeMarineReportWithGeminiImpact({
+  out = await mergeMarineReportWithGroqImpact({
     latitude,
     longitude,
     reporterStructured,
@@ -1191,7 +1209,7 @@ Return ONLY a JSON array of up to 3 action items, no markdown. Skip a slot rathe
 action_type: assign_vessel | assign_land_crew | accept_handoff | reorder_supply | mark_cleared | none
 Set sighting_id, vessel_id, land_crew_id, supply_id, handoff_id from the data above when relevant.`;
 
-  const response = await llmTextCompletion([{ role: 'user', content: prompt }]);
+  const response = await groqTextCompletion([{ role: 'user', content: prompt }]);
   const raw = response.choices[0].message.content.trim();
   let items;
   try {
@@ -1231,7 +1249,7 @@ Assessment: ${analysis}
 Brief for the receiving coordinator: debris, risk, suggested vessel class, priority.
 Max 100 words. Professional tone.`;
 
-  const response = await llmTextCompletion([{ role: 'user', content: prompt }]);
+  const response = await groqTextCompletion([{ role: 'user', content: prompt }]);
   return response.choices[0].message.content;
 }
 
@@ -1242,6 +1260,6 @@ Intercept ${densityLabel} ${debrisType} debris in ${interceptionHours} hours at 
 Write a concise crew briefing: equipment needed, approach instructions, safety considerations.
 Max 80 words. Direct operational tone.`;
 
-  const response = await llmTextCompletion([{ role: 'user', content: prompt }]);
+  const response = await groqTextCompletion([{ role: 'user', content: prompt }]);
   return response.choices[0].message.content;
 }

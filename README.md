@@ -1,197 +1,173 @@
-# ClearMarine — AI-Powered Ocean Debris Coordination
+# ClearMarine
 
-> **DataHacks 2026** — Real-time ocean debris tracking, drift forecasting, and multi-agency fleet + shore crew coordination.
+**Ocean debris sightings → AI-enriched assessments → drift-aware dispatch for ships and shore crews.**
 
+Built for **DataHacks 2026**.  
 **Repo:** [github.com/shrivassudharsan1/ClearMarine](https://github.com/shrivassudharsan1/ClearMarine)
 
 ---
 
-## What It Does
+## Elevator pitch (45 seconds)
 
-ClearMarine connects three groups in a single web app:
-
-| Who | Route | Role |
-|-----|-------|------|
-| Anyone (beach, boat, drone) | `/report` | Photo + GPS → AI debris assessment → sighting logged |
-| Ops coordinators | `/dashboard` | Live map, AI crew agent, assign vessels & shore crews, partner handoffs |
-| Vessel crews | `/vessel/:id` | Assignment brief, status updates, fuel/supplies, maintenance timer |
+Marine debris reports are chaotic: photos, handwritten notes, radio chatter, and no shared picture of *who should respond*. ClearMarine gives the public a single **naval-themed field report** (`/report`), fuses **structured form data + optional CV signals + Groq reasoning** into one severity narrative, then forecasts **where debris may drift** using **real CORC Spray glider currents** plus HYCOM-style fallbacks. Coordinators watch a **live ops map** (`/dashboard`), get **Groq-ranked crew suggestions**, dispatch the right **vessel or land crew**, and crews execute from a dedicated **vessel workstation** (`/vessel/:id`). Supabase ties it together with **Realtime** updates so the room sees the same incident evolve.
 
 ---
 
-## Key Features
+## Problem → approach → outcome
 
-### Reporting (`/report`)
-- Snap a photo or describe debris in text — **Gemini AI** returns type, density (1–10), and estimated volume
-- GPS auto-detected or manually entered; drift forecast computed on submit
-- Voice report support with transcription
-- Done screen shows drift path, pickup mode badge, and predicted landfall
-
-### Dashboard (`/dashboard`)
-- **Leaflet map** with live vessel positions, animated mission paths, and shore crew markers coast-to-coast
-- **Drift paths** clipped at modeled coastline — ⚑ flag only when track approaches shore
-- **Pickup classification** — debris within 15 km of shore routes to land crews automatically; deep-ocean sightings go to ships; drift-to-coast routes to shore crews. Land sightings suppress the drift heatmap entirely.
-- **AI Crew Agent** — Gemini-powered suggestions: named vessel or shore crew, supply reorders, handoffs. Suggestions are dismissible
-- Dispatch modal ranks all available crews by ETA (ship or land depending on pickup mode)
-- Per-agency isolation — each agency sees only their sightings and fleet; shore crews are shared
-- New sighting and assignment toast notifications at top of screen
-- Partner handoff lane: ClearMarine Operations ↔ EPA
-
-### Vessel Station (`/vessel/:id`)
-- Mark intercepted → vessel automatically returns to `available`
-- Maintenance timer with 3 duration presets (demo-scaled via `REACT_APP_MAINTENANCE_SCALE`)
-- Supply resupply request button per zone with live delivery countdown
-
-### Crew Routing (`src/lib/cleanupTime.js`)
-- Haversine distance + vessel speed (knots) or land crew speed (km/h) → ETA in minutes
-- Parses free-form AI volume strings ("~200 kg", "10 m patch", "5–20 items") with density fallbacks
-- Drift interception: picks closest 24/48/72 h waypoint to vessel as intercept proxy
+| | |
+|--|--|
+| **Problem** | Coastal and offshore debris incidents need faster triage, clearer handoffs between agencies, and responders who see *where material may go*, not just where it was seen. |
+| **Approach** | One React app for reporters and operators; Postgres + Realtime via Supabase; Groq for reconciliation, impact scoring, and crew/agent text; ElevenLabs for optional voice transcribe/TTS through a small Node API; Leaflet for operations visibility. |
+| **Outcome** | End-to-end demo loop: **report → map → dispatch → intercept → complete**, with drift context and rostered crews. |
 
 ---
 
-## Architecture
+## Live paths (what to click in the demo)
+
+| Audience | Route | What judges see |
+|----------|-------|-----------------|
+| Public / field | **`/report`** | Photo or text sighting, optional voice notes (STT), AI-filled severity and narrative, drift summary on submit. |
+| Coordination center | **`/dashboard`** | Live map, sightings, fleet + **24 shore crews**, AI crew suggestions, dispatch modal with ETAs, optional agency handoffs. |
+| Crew on the water | **`/vessel/:id`** | Assignment brief, intercept framing, **mark intercepted** to close the loop. |
+
+---
+
+## Judge demo script (~3 minutes)
+
+1. **`/report`** — Log in as a reporter; add a coastline-near sighting (photo or text). Submit and show the **density label**, narrative, and **drift / pickup-mode** framing on the done screen.
+2. **`/dashboard`** — Confirm the sighting appears on the map (Realtime). Open **AI Crew Agent** suggestions; click **dispatch** and walk through **ranked crews** (ship vs land logic).
+3. **Assign** — Brief modal with intercept-style coordinates and **Groq-generated crew brief**.
+4. **`/vessel/:id`** — Show assignment state; **mark intercepted** and watch status return on the dashboard.
+5. **CREWS** tab — Quickly show shore roster breadth (demo-seeded coast-to-coast crews).
+6. *(Optional)* Switch agency context to **EPA** — scoped sightings and partner handoff lane vs ClearMarine Operations.
+
+---
+
+## Architecture (high level)
 
 ```
-Public Reporter (/report)
-    │  photo + GPS
+Public (/report)
+    │  GPS + photo/text/voice notes
     ▼
-Gemini analysis → debris_sightings (Supabase)
-    │
+ Browser CV pipeline (optional) + Groq reconciliation / impact pass
+    │  → debris_sightings , structured AI fields (Supabase)
     ▼
-predictDrift() → drift_predictions
-    │  1. Spray CORC glider (≤120 km)
-    │  2. HYCOM ocean_currents grid
-    │  3. Gyre fallback
-    │  24h / 48h / 72h positions
+ predictDrift() → drift_predictions
+       • CORC Spray glider index (Pacific, ≤120 km)
+       • HYCOM-style ocean_currents grid
+       • Bearing/speed fallback
     ▼
-Dashboard (/dashboard) ← Supabase Realtime
-    ├── classifyPickupMode() → land / ship / ship_coast / unknown
-    ├── rankCrewsForSighting() → sorted ETA list
-    ├── AI Crew Agent (Gemini) → assign / handoff / reorder suggestions
-    └── Assign → interception point + Gemini crew brief → /vessel/:id
+ Dashboard (/dashboard) ◄—— Supabase Realtime
+       classifyPickupMode · rankCrewsForSighting · Groq crew agent
+       assignments · handoffs · supplies
 ```
 
 ---
 
-## Tech Stack
+## Tech stack
 
-- **React 18** + **Tailwind CSS** (naval dark theme, glassmorphism)
-- **Supabase** (Postgres + Realtime subscriptions)
-- **Google Gemini** (`gemini-2.5-flash` by default) for AI text analysis, crew suggestions, and briefs
-- **Leaflet** + `react-leaflet` for maps
-- **Spray CORC glider data** (`public/data/corc_glider_index.json`) for real ocean current drift
+| Layer | Choices |
+|-------|---------|
+| **Frontend** | React (CRA), Tailwind, React Router, Leaflet |
+| **Backend (API)** | Express routes mounted at `/` and `/api/*` for **Vercel serverless** + local `npm run start:api` |
+| **Data** | Supabase (Postgres + Realtime) |
+| **AI (browser)** | Groq (`groq-sdk`, default `llama-3.1-8b-instant`) |
+| **Voice** | ElevenLabs Scribe/TTS via backend **`/api/transcribe`** and **`/api/tts`** |
+| **Drift** | Precomputed `corc_glider_index.json` + seeded `ocean_currents` |
 
 ---
 
-## Quick Start
+## Environment variables
 
-### 1. Clone & install
+Single root **`.env`** can hold both UI and API secrets (see `.env.example`).
+
+**Required for core app**
+
+| Variable | Purpose |
+|----------|---------|
+| `REACT_APP_SUPABASE_URL` | Supabase project URL |
+| `REACT_APP_SUPABASE_ANON_KEY` | Supabase anon key |
+| `REACT_APP_GROQ_API_KEY` | Groq (browser) for debris text, reconciliation, crew agent |
+
+**Voice (STT/TTS)**
+
+| Variable | Purpose |
+|----------|---------|
+| `ELEVENLABS_KEY` | Backend Scribe + TTS |
+
+**URLs**
+
+| Variable | Purpose |
+|----------|---------|
+| _(omit)_ | **Vercel**: same-origin **`/api`** |
+| `REACT_APP_BACKEND_URL=http://localhost:8787` | Optional local override if not using CRA proxy |
+
+**Optional:** `ROBOFLOW_API_KEY`, `REACT_APP_ENABLE_ROBOFLOW`, `REACT_APP_ROBOFLOW_PROXY_URL`, ElevenLabs model overrides, `REACT_APP_MAINTENANCE_SCALE` (demo timers).
+
+---
+
+## Run locally
 
 ```bash
 git clone https://github.com/shrivassudharsan1/ClearMarine.git
 cd ClearMarine
 npm install
+cp .env.example .env   # fill Supabase + Groq + ElevenLabs
 ```
 
-### 2. Supabase setup
-
-1. Create a free project at [supabase.com](https://supabase.com)
-2. SQL Editor → run `supabase_schema.sql` (tables, seeds, Realtime)
-3. Copy your project URL and anon key
-
-### 3. Environment
+**Two terminals** (voice + map STT/TTS requires the API):
 
 ```bash
-cp .env.example .env
-```
+# Terminal 1 — API on :8787
+npm run start:api
 
-Fill in required values (single env file for both frontend + backend):
-
-```env
-REACT_APP_SUPABASE_URL=https://your-project.supabase.co
-REACT_APP_SUPABASE_ANON_KEY=your-anon-key
-REACT_APP_GEMINI_API_KEY=your-gemini-key
-# Leave unset for single-app Vercel deploys (frontend will call same-origin /api)
-# REACT_APP_BACKEND_URL=http://localhost:8787
-REACT_APP_MAINTENANCE_SCALE=0.05   # 0.05 = 20x shorter timers for demos
-
-PORT=8787
-ELEVENLABS_KEY=your-elevenlabs-key
-# ELEVENLABS_STT_MODEL=scribe_v2
-# ELEVENLABS_STT_LANGUAGE=en
-# ELEVENLABS_VOICE_ID=21m00TcmT4DvrzdWaoCl6
-# ELEVENLABS_TTS_MODEL=eleven_multilingual_v2
-# ROBOFLOW_API_KEY=your-roboflow-key
-```
-
-Required keys summary:
-- Root (`.env`): `REACT_APP_SUPABASE_URL`, `REACT_APP_SUPABASE_ANON_KEY`, `REACT_APP_GEMINI_API_KEY`, `ELEVENLABS_KEY`
-- Optional root (`.env`): `REACT_APP_BACKEND_URL` (only for split frontend/backend hosting), `PORT`, `ROBOFLOW_API_KEY`, and ElevenLabs model overrides
-
-### 4. Deploy on Vercel (single app)
-
-- Keep frontend + backend in one project.
-- Backend routes are exposed under `/api/*` via Vercel Functions (`api/[...path].js`).
-- Add the same env keys from `.env` to Vercel Project Settings → Environment Variables.
-- Do not upload `.env` files; Vercel reads env vars from project settings.
-
-### 5. (Optional) Seed HYCOM ocean currents
-
-```bash
-node scripts/seed_currents.js
-```
-
-### 6. Run
-
-```bash
+# Terminal 2 — CRA dev server (proxies /api → 8787 via package.json)
 npm start
 ```
 
----
+Health check: open **`http://localhost:3000/api/health`** — `elevenlabs_key_configured` should be `true` when ElevenLabs is set.
 
-## Demo Script (3 min)
-
-1. **`/report`** — submit a photo or typed sighting near a coastline. AI fills in debris type, density, and volume. Done screen shows drift path and pickup badge (Land crew / Ship pickup).
-2. **`/dashboard`** — sighting appears live on the map. AI Crew Agent suggests a vessel or shore crew. Click **DISPATCH CREW** → modal ranks all available crews by ETA.
-3. Assign the top crew → brief modal with intercept coordinates and Gemini-generated crew brief.
-4. **`/vessel/:id`** — crew view shows the assignment. Hit **MARK INTERCEPTED** → vessel returns to available, mission closes on dashboard.
-5. Show the **CREWS tab** — full roster of 24 shore crews coast-to-coast, all with live status badges.
-6. *(Bonus)* Switch agency selector to **EPA** — dashboard shows only EPA sightings and handles incoming handoffs from ClearMarine Operations.
+Seed optional currents: `node scripts/seed_currents.js`
 
 ---
 
-## Database Schema
+## Deploy (Vercel — single project)
 
-| Table | Purpose |
-|-------|---------|
-| `debris_sightings` | Reports: location, AI fields, jurisdiction, handoff_status |
-| `drift_predictions` | 24/48/72 h lat/lon snapshots |
-| `ocean_currents` | HYCOM-style grid for drift fallback |
-| `vessels` | Fleet: status, position, speed, capacity |
-| `land_crews` | Shore crews: base coords, speed, capacity, agency |
-| `assignments` | Sighting ↔ crew, intercept point, brief |
-| `supplies` | Zone inventory with low-stock thresholds |
-| `supply_orders` | Resupply requests with delivery ETAs |
+1. Import the GitHub repo.
+2. Add the same variables from `.env` in **Project → Settings → Environment Variables**.
+3. Deploy; API lives at **`https://<your-domain>/api/*`** (`vercel.json` + `api/[...path].js`).
 
-Full DDL: `supabase_schema.sql`
+Do not commit `.env`; use Vercel’s dashboard for secrets.
 
 ---
 
-## Glider Data (Spray CORC)
+## Reproduce this submission build
 
-Real observed depth-mean currents from **Spray underwater gliders** (CORC — California Regional Ocean) inform drift for Pacific sightings.
-
-The browser loads `public/data/corc_glider_index.json` (pre-built, ~1.3 MB). To rebuild from a fresh `CORC.nc`:
+Hackathon reviewers can pin the tree to the submission commit:
 
 ```bash
-pip install -r scripts/requirements-glider.txt
-python3 scripts/build_corc_glider_json.py /path/to/CORC.nc
-# or: npm run build:glider-data  (needs CORC.nc at ../CORC.nc)
+git checkout 0d5a866
+npm ci && npm run build
 ```
 
-`*.nc` files are gitignored. Only the JSON index is committed.
+Adjust the hash if you tag a release later (`git tag demo-submission && git push --tags`).
 
 ---
 
-## Built By
+## Database & data
 
-Shrivas Sudharsan — DataHacks 2026
+- **Schema & seeds:** run `supabase_schema.sql` in the Supabase SQL editor.
+- **CORC glider JSON:** shipped as `public/data/corc_glider_index.json`; rebuild via `scripts/build_corc_glider_json.py` if you have `CORC.nc`.
+
+---
+
+## Team
+
+**Shrivas Sudharsan** — DataHacks 2026 · ClearMarine  
+
+---
+
+## License / usage
+
+Contents follow this repository’s license as published upstream; do not embed live API keys in forks or demos.
