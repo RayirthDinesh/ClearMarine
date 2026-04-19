@@ -55,20 +55,21 @@ const gemini = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || ''
 const TEXT_MODEL_PRIMARY =
   process.env.REACT_APP_GEMINI_TEXT_MODEL || 'gemini-2.5-flash';
 
-/** Fallback chain for Gemini text models. */
-const TEXT_FALLBACK_FLASH = 'gemini-1.5-flash';
-const TEXT_FALLBACK_PRO = 'gemini-1.5-pro';
+/** Fallback chain for Gemini text models (keep to current v1beta IDs). */
+const TEXT_FALLBACK_FLASH = 'gemini-2.5-flash';
+const TEXT_FALLBACK_FLASH_2_0 = 'gemini-2.0-flash';
+const TEXT_FALLBACK_FLASH_LITE_2_0 = 'gemini-2.0-flash-lite';
 
 function textModelFallbackChain() {
   const primary = TEXT_MODEL_PRIMARY;
-  const rest = [TEXT_FALLBACK_FLASH, TEXT_FALLBACK_PRO];
+  const rest = [TEXT_FALLBACK_FLASH, TEXT_FALLBACK_FLASH_2_0, TEXT_FALLBACK_FLASH_LITE_2_0];
   return [primary, ...rest].filter((m, i, a) => m && a.indexOf(m) === i);
 }
 
 /** Stronger default chain for voice → form mapping only. Override: REACT_APP_GEMINI_VOICE_INFER_MODEL */
 function voiceInferModelFallbackChain() {
-  const primary = process.env.REACT_APP_GEMINI_VOICE_INFER_MODEL || TEXT_FALLBACK_PRO;
-  const rest = [TEXT_FALLBACK_FLASH, TEXT_FALLBACK_PRO];
+  const primary = process.env.REACT_APP_GEMINI_VOICE_INFER_MODEL || TEXT_MODEL_PRIMARY;
+  const rest = [TEXT_FALLBACK_FLASH_2_0, TEXT_FALLBACK_FLASH_LITE_2_0];
   return [primary, ...rest].filter((m, i, a) => m && a.indexOf(m) === i);
 }
 
