@@ -7,7 +7,7 @@ import {
 } from '../lib/gemini';
 import { supabase } from '../lib/supabase';
 import { predictDrift } from '../lib/drift';
-import { formatCoordPair, parseManualLongitude } from '../lib/coords';
+import { formatCoordPair, parseManualLongitudeWest } from '../lib/coords';
 
 const WASTE_TYPE_OPTIONS = [
   { value: 'plastic', label: 'Plastic / foam / bottles' },
@@ -166,7 +166,7 @@ export default function ReportDebris() {
     e.preventDefault();
     const lat = locMode === 'manual' ? parseFloat(manualLat) : location?.lat;
     const lon = locMode === 'manual'
-      ? parseManualLongitude(manualLon, manualLonHemisphere === 'E' ? 'E' : 'W')
+      ? (manualLonHemisphere === 'E' ? Math.abs(parseFloat(manualLon)) : parseManualLongitudeWest(manualLon))
       : location?.lon;
     if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
       alert('Location required — enter valid latitude and longitude.');
@@ -274,42 +274,38 @@ export default function ReportDebris() {
     }
   };
 
-  const densityColor = (label) => {
-    if (label === 'Unverified') return 'bg-slate-600 text-slate-100';
-    if (label === 'Critical') return 'bg-red-600 text-white';
-    if (label === 'Dense') return 'bg-orange-500 text-white';
-    if (label === 'Moderate') return 'bg-yellow-500 text-black';
-    return 'bg-green-600 text-white';
-  };
-
   if (step === 'name') {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div className="bg-slate-800 rounded-2xl p-8 w-full max-w-md shadow-2xl border border-slate-700">
-          <div className="text-center mb-6">
-            <div className="text-5xl mb-3">🌊</div>
-            <h1 className="text-2xl font-bold text-white">ClearMarine</h1>
-            <p className="text-slate-400 mt-1 text-sm">Ocean Debris Reporting System</p>
+      <div className="min-h-screen naval-bg flex items-center justify-center p-4">
+        <div className="glass rounded-2xl p-8 w-full max-w-md shadow-2xl slide-up">
+          <div className="text-center mb-8">
+            <div className="text-5xl mb-4">🌊</div>
+            <h1 className="display text-4xl tracking-widest" style={{ color: 'var(--cyan-glow)', textShadow: '0 0 30px rgba(0,212,255,0.4)' }}>CLEARMARINE</h1>
+            <p className="mono text-xs mt-2 tracking-widest" style={{ color: 'var(--text-secondary)' }}>OCEAN DEBRIS FIELD REPORT SYSTEM</p>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) setStep('report'); }} className="space-y-4">
             <div>
-              <label className="block text-slate-300 text-sm font-medium mb-2">Your name or vessel ID</label>
+              <label className="block mono text-xs font-bold mb-2 tracking-widest" style={{ color: 'var(--text-secondary)' }}>REPORTER ID / VESSEL CALL SIGN</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Patrol Officer Chen / MV Seabird"
-                className="w-full bg-slate-700 text-white placeholder-slate-400 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none mono"
+                style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)', color: 'var(--text-primary)' }}
+                onFocus={e => e.target.style.borderColor = 'var(--cyan-glow)'}
+                onBlur={e => e.target.style.borderColor = 'var(--navy-border)'}
                 autoFocus
               />
             </div>
-            <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold py-3 rounded-xl transition-colors">
-              Report Debris Sighting
+            <button type="submit" className="w-full mono font-bold py-3 rounded-xl transition-colors tracking-widest"
+              style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}>
+              INITIATE REPORT →
             </button>
           </form>
-          <div className="mt-4 pt-4 border-t border-slate-700 text-center">
-            <a href="/dashboard" className="text-slate-500 text-xs hover:text-slate-300 transition-colors">
-              Coordinator? Go to Dashboard →
+          <div className="mt-6 pt-4 text-center" style={{ borderTop: '1px solid var(--navy-border)' }}>
+            <a href="/dashboard" className="mono text-[10px] tracking-widest transition-colors" style={{ color: 'var(--text-dim)' }}>
+              COORDINATOR ACCESS → DASHBOARD
             </a>
           </div>
         </div>
@@ -318,102 +314,95 @@ export default function ReportDebris() {
   }
 
   if (step === 'done' && result) {
+    const dLabel = result.analysis.density_label;
+    const densityStyle = dLabel === 'Critical'
+      ? { background: 'rgba(239,68,68,0.15)', border: '1px solid var(--red-crit)', color: 'var(--red-crit)' }
+      : dLabel === 'Dense'
+        ? { background: 'rgba(245,158,11,0.15)', border: '1px solid var(--amber)', color: 'var(--amber)' }
+        : dLabel === 'Moderate'
+          ? { background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.5)', color: '#fbbf24' }
+          : { background: 'rgba(16,185,129,0.1)', border: '1px solid var(--green-ok)', color: 'var(--green-ok)' };
+
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
-        <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700 shadow-2xl">
-          <div className="text-center mb-4">
-            <div className="text-4xl mb-2">✅</div>
-            <h2 className="text-white font-bold text-xl">Sighting Reported</h2>
-            <p className="text-slate-400 text-sm">Cleanup crews have been notified</p>
+      <div className="min-h-screen naval-bg flex flex-col items-center justify-center p-4">
+        <div className="glass rounded-2xl p-6 w-full max-w-md shadow-2xl slide-up">
+          <div className="text-center mb-5">
+            <div className="text-4xl mb-3">✦</div>
+            <h2 className="display text-3xl tracking-widest" style={{ color: 'var(--green-ok)' }}>SIGHTING LOGGED</h2>
+            <p className="mono text-xs mt-1 tracking-widest" style={{ color: 'var(--text-secondary)' }}>FIELD REPORT TRANSMITTED TO COMMAND</p>
           </div>
 
-          <div className="bg-slate-700 rounded-xl p-4 mb-4 space-y-2">
+          <div className="rounded-xl p-4 mb-4 space-y-3" style={{ background: 'var(--navy-surface)', border: '1px solid var(--navy-border)' }}>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${densityColor(result.analysis.density_label)}`}>
+              <span className="mono text-xs font-bold px-2 py-0.5 rounded" style={densityStyle}>
                 {result.analysis.density_label} — {result.analysis.density_score}/10
               </span>
-              <span className="text-xs bg-slate-600 text-slate-200 px-2 py-0.5 rounded-full capitalize">
+              <span className="mono text-xs px-2 py-0.5 rounded capitalize" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)', color: 'var(--text-secondary)' }}>
                 {result.analysis.debris_type.replace('_', ' ')}
               </span>
-              <span className="text-xs text-slate-400">
-                {result.analysis.estimated_volume === 'unknown' ? 'Volume not estimated' : result.analysis.estimated_volume}
-              </span>
+              {result.analysis.estimated_volume !== 'unknown' && (
+                <span className="mono text-xs" style={{ color: 'var(--text-secondary)' }}>{result.analysis.estimated_volume}</span>
+              )}
             </div>
             {(result.analysis.approximate_size || result.analysis.quantity_estimate) && (
-              <p className="text-slate-400 text-xs">
-                Scale (reconciled): {result.analysis.approximate_size}
+              <p className="mono text-xs" style={{ color: 'var(--text-secondary)' }}>
+                Scale: {result.analysis.approximate_size}
                 {result.analysis.quantity_estimate ? ` · ${result.analysis.quantity_estimate}` : ''}
                 {result.analysis.spread && result.analysis.spread !== 'unknown'
                   ? ` · ${String(result.analysis.spread).replace(/_/g, ' ')}`
                   : ''}
               </p>
             )}
-            {result.analysis.intensity_rationale ? (
-              <p className="text-slate-400 text-xs italic border-l-2 border-cyan-600 pl-2 mt-1">
-                Why this rating: {result.analysis.intensity_rationale}
+            {result.analysis.intensity_rationale && (
+              <p className="text-xs italic leading-snug pl-2" style={{ borderLeft: '2px solid var(--cyan-glow)', color: 'var(--text-secondary)' }}>
+                {result.analysis.intensity_rationale}
               </p>
-            ) : null}
+            )}
             {result.analysis.severity_assessment && (
-              <div className="rounded-lg border border-cyan-800/60 bg-slate-900/90 p-3 space-y-2">
-                <p className="text-cyan-400 text-[10px] font-semibold uppercase tracking-wider">Reconciled risk (CV + expert hypothesis)</p>
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="text-slate-300">
-                    Severity <span className="text-white font-mono">{result.analysis.severity_assessment.severity}/10</span>
+              <div className="rounded-lg p-3 space-y-2" style={{ background: 'var(--navy-deep)', border: '1px solid rgba(0,212,255,0.2)' }}>
+                <p className="mono text-[10px] tracking-widest" style={{ color: 'var(--cyan-glow)' }}>RECONCILED RISK · CV + AI HYPOTHESIS</p>
+                <div className="flex flex-wrap items-center gap-2 text-xs mono">
+                  <span style={{ color: 'var(--text-primary)' }}>
+                    Severity <span style={{ color: 'var(--cyan-glow)' }}>{result.analysis.severity_assessment.severity}/10</span>
                   </span>
-                  <span className="text-slate-500">·</span>
-                  <span className="text-slate-300">
-                    confidence <span className="text-white font-mono">{result.analysis.severity_assessment.confidence ?? '—'}</span>
+                  <span style={{ color: 'var(--text-dim)' }}>·</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    conf <span style={{ color: 'var(--text-primary)' }}>{result.analysis.severity_assessment.confidence ?? '—'}</span>
                   </span>
                   {result.analysis.severity_assessment.agreement_level && (
-                    <>
-                      <span className="text-slate-500">·</span>
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${
-                          result.analysis.severity_assessment.agreement_level === 'high'
-                            ? 'bg-emerald-900/80 text-emerald-200'
-                            : result.analysis.severity_assessment.agreement_level === 'low'
-                              ? 'bg-amber-900/80 text-amber-200'
-                              : 'bg-slate-700 text-slate-200'
-                        }`}
-                      >
-                        agreement: {result.analysis.severity_assessment.agreement_level}
-                      </span>
-                    </>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase" style={
+                      result.analysis.severity_assessment.agreement_level === 'high'
+                        ? { background: 'rgba(16,185,129,0.15)', color: 'var(--green-ok)' }
+                        : result.analysis.severity_assessment.agreement_level === 'low'
+                          ? { background: 'rgba(245,158,11,0.15)', color: 'var(--amber)' }
+                          : { background: 'var(--navy-surface)', color: 'var(--text-secondary)' }
+                    }>
+                      {result.analysis.severity_assessment.agreement_level}
+                    </span>
                   )}
                 </div>
                 {result.analysis.severity_assessment.final_objects?.length > 0 && (
-                  <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Final objects (reconciled)</p>
-                    <ul className="text-slate-300 text-[11px] space-y-0.5 font-mono">
-                      {result.analysis.severity_assessment.final_objects.map((o, i) => (
-                        <li key={i}>
-                          <span className="text-cyan-500/90">{o.role || '?'}</span>{' '}
-                          {o.label || '—'}{' '}
-                          <span className="text-slate-500">({o.source || '?'})</span>
-                          {o.detail ? <span className="text-slate-500"> — {o.detail}</span> : null}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {result.analysis.severity_assessment.key_factors?.length > 0 && (
-                  <ul className="text-slate-400 text-[11px] list-disc list-inside space-y-0.5">
-                    {result.analysis.severity_assessment.key_factors.map((f, i) => (
-                      <li key={i}>{f}</li>
+                  <ul className="mono text-[11px] space-y-0.5" style={{ color: 'var(--text-secondary)' }}>
+                    {result.analysis.severity_assessment.final_objects.map((o, i) => (
+                      <li key={i}>
+                        <span style={{ color: 'var(--cyan-glow)' }}>{o.role || '?'}</span>{' '}
+                        {o.label || '—'}{' '}
+                        <span style={{ color: 'var(--text-dim)' }}>({o.source || '?'})</span>
+                      </li>
                     ))}
                   </ul>
                 )}
+                {result.analysis.severity_assessment.key_factors?.length > 0 && (
+                  <ul className="text-[11px] list-disc list-inside space-y-0.5" style={{ color: 'var(--text-secondary)' }}>
+                    {result.analysis.severity_assessment.key_factors.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                )}
                 {result.analysis.severity_assessment.conflicts?.length > 0 && (
-                  <div className="border-t border-slate-700 pt-2 mt-1">
-                    <p className="text-amber-400/90 text-[10px] font-semibold uppercase tracking-wider mb-1">Conflicts & resolution</p>
-                    <ul className="text-slate-400 text-[11px] space-y-1">
+                  <div className="pt-2 mt-1" style={{ borderTop: '1px solid var(--navy-border)' }}>
+                    <p className="mono text-[10px] tracking-widest mb-1" style={{ color: 'var(--amber)' }}>CONFLICTS & RESOLUTION</p>
+                    <ul className="text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}>
                       {result.analysis.severity_assessment.conflicts.map((c, i) => (
-                        <li key={i}>
-                          <span className="text-slate-300">{c.topic}</span>
-                          {c.resolution ? (
-                            <span className="text-slate-500"> → {c.resolution}</span>
-                          ) : null}
-                        </li>
+                        <li key={i}><span style={{ color: 'var(--text-primary)' }}>{c.topic}</span>{c.resolution ? <span style={{ color: 'var(--text-dim)' }}> → {c.resolution}</span> : null}</li>
                       ))}
                     </ul>
                   </div>
@@ -424,42 +413,30 @@ export default function ReportDebris() {
                   const dc = det.debris?.length ?? 0;
                   const empty = ac === 0 && dc === 0;
                   return (
-                    <p className={`text-[10px] font-mono leading-relaxed ${empty ? 'text-amber-300/90' : 'text-slate-500'}`}>
-                      {empty ? (
-                        <>
-                          Object detector ({det.detector}): <strong>no bbox hits</strong> (0 animals, 0 debris above
-                          confidence threshold). Dense rating here comes from your structured report / LLM text — not
-                          from counted objects in the image.
-                        </>
-                      ) : (
-                        <>
-                          Raw CV: {det.detector} · animals {ac}, debris {dc}
-                          {result.analysis.pipeline_evidence.geo?.protected_area ? ' · illustrative protected-area flag' : ''}
-                        </>
-                      )}
+                    <p className="mono text-[10px] leading-relaxed" style={{ color: empty ? 'var(--amber)' : 'var(--text-dim)' }}>
+                      {empty
+                        ? `CV (${det.detector}): no objects detected above threshold — density from structured report / LLM text.`
+                        : `CV: ${det.detector} · animals ${ac}, debris ${dc}`}
                     </p>
                   );
                 })()}
               </div>
             )}
-            <p className="text-slate-300 text-sm leading-relaxed">{result.analysis.gemini_analysis}</p>
+            <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{result.analysis.gemini_analysis}</p>
           </div>
 
-          <div className="bg-slate-900 rounded-xl p-4 mb-4">
-            <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wider">Predicted Drift Path</p>
+          <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)' }}>
+            <p className="mono text-[10px] tracking-widest mb-3" style={{ color: 'var(--cyan-glow)' }}>PREDICTED DRIFT PATH</p>
             <div className="space-y-1.5">
               {result.drift.predictions.map((p) => (
                 <div key={p.hours} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">+{p.hours}h</span>
-                  <span className="text-cyan-400 font-mono">{formatCoordPair(p.lat, p.lon)}</span>
+                  <span className="mono" style={{ color: 'var(--text-dim)' }}>+{p.hours}h</span>
+                  <span className="mono" style={{ color: 'var(--cyan-glow)' }}>{formatCoordPair(p.lat, p.lon)}</span>
                 </div>
               ))}
             </div>
-            <p className="text-slate-500 text-xs mt-2">
-              Current: {result.drift.speed.toFixed(2)} knots at {result.drift.bearing.toFixed(0)}°
-            </p>
-            <p className={`text-xs mt-1 leading-snug ${result.drift.source.includes('Spray') ? 'text-emerald-400 font-medium' : 'text-slate-500'}`}>
-              Drift driver: {result.drift.source}
+            <p className="mono text-xs mt-3" style={{ color: 'var(--text-dim)' }}>
+              {result.drift.speed.toFixed(2)} kts · {result.drift.bearing.toFixed(0)}° · {result.drift.source}
             </p>
           </div>
 
@@ -481,37 +458,58 @@ export default function ReportDebris() {
               setManualLon('');
               setManualLonHemisphere('W');
             }}
-            className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium py-3 rounded-xl transition-colors text-sm"
+            className="w-full mono font-bold py-3 rounded-xl transition-colors tracking-widest text-sm"
+            style={{ background: 'rgba(0,212,255,0.08)', border: '1px solid var(--navy-border)', color: 'var(--text-secondary)' }}
+            onMouseEnter={e => { e.target.style.borderColor = 'var(--cyan-glow)'; e.target.style.color = 'var(--cyan-glow)'; }}
+            onMouseLeave={e => { e.target.style.borderColor = 'var(--navy-border)'; e.target.style.color = 'var(--text-secondary)'; }}
           >
-            ← Report Another Sighting
+            ← NEW REPORT
           </button>
         </div>
       </div>
     );
   }
 
+  const selectStyle = {
+    background: 'var(--navy-deep)',
+    border: '1px solid var(--navy-border)',
+    color: 'var(--text-primary)',
+    borderRadius: '0.75rem',
+    padding: '0.625rem 0.75rem',
+    fontSize: '0.875rem',
+    width: '100%',
+    outline: 'none',
+  };
+
+  const inputStyle = {
+    background: 'var(--navy-deep)',
+    border: '1px solid var(--navy-border)',
+    color: 'var(--text-primary)',
+    borderRadius: '0.75rem',
+    padding: '0.625rem 0.75rem',
+    fontSize: '0.875rem',
+    outline: 'none',
+  };
+
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      <header className="bg-slate-800 border-b border-slate-700 px-4 py-3 flex items-center gap-3">
+    <div className="min-h-screen naval-bg" style={{ color: 'var(--text-primary)' }}>
+      <header className="px-4 py-3 flex items-center gap-3" style={{ background: 'rgba(2,12,27,0.9)', borderBottom: '1px solid var(--navy-border)', backdropFilter: 'blur(12px)' }}>
         <span className="text-2xl">🌊</span>
         <div>
-          <h1 className="text-white font-bold">ClearMarine — Report Sighting</h1>
-          <p className="text-slate-400 text-xs">Reporter: {name}</p>
+          <h1 className="display text-xl tracking-widest" style={{ color: 'var(--cyan-glow)' }}>CLEARMARINE</h1>
+          <p className="mono text-[10px] tracking-widest" style={{ color: 'var(--text-secondary)' }}>REPORTER: {name.toUpperCase()}</p>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
-          <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse" />
-          <span className="text-cyan-400 text-xs">Live</span>
+          <div className="w-2 h-2 rounded-full live-dot" style={{ background: 'var(--cyan-glow)' }} />
+          <span className="mono text-xs" style={{ color: 'var(--cyan-glow)' }}>LIVE</span>
         </div>
       </header>
 
       <form onSubmit={handleSubmit} className="max-w-lg mx-auto p-4 space-y-4">
         {/* Photo upload */}
-        <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
+        <div className="glass rounded-2xl p-4">
           <div className="flex items-start justify-between gap-2 mb-3">
-            <p className="text-slate-300 text-sm font-medium">Debris Photo</p>
-            <p className="text-slate-500 text-[10px] text-right max-w-[240px] leading-snug">
-              Your form + notes lead; CV JSON adds hints. If COCO finds nothing, Gemini may read the photo once (when API key set). Groq only sees JSON.
-            </p>
+            <p className="mono text-xs font-bold tracking-widest" style={{ color: 'var(--text-secondary)' }}>DEBRIS PHOTO <span style={{ color: 'var(--text-dim)' }}>(OPTIONAL)</span></p>
           </div>
           {photo ? (
             <div className="relative">
@@ -519,212 +517,174 @@ export default function ReportDebris() {
               <button
                 type="button"
                 onClick={() => setPhoto(null)}
-                className="absolute top-2 right-2 bg-slate-900 bg-opacity-80 text-white text-xs px-2 py-1 rounded-lg"
+                className="absolute top-2 right-2 mono text-xs px-2 py-1 rounded-lg"
+                style={{ background: 'rgba(2,12,27,0.85)', border: '1px solid var(--navy-border)', color: 'var(--text-secondary)' }}
               >
-                Remove
+                REMOVE
               </button>
             </div>
           ) : (
             <button
               type="button"
               onClick={() => fileRef.current.click()}
-              className="w-full h-40 border-2 border-dashed border-slate-600 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-cyan-500 transition-colors"
+              className="w-full h-36 rounded-xl flex flex-col items-center justify-center gap-2 transition-colors"
+              style={{ border: '2px dashed var(--navy-border)' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--cyan-glow)'}
+              onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--navy-border)'}
             >
               <span className="text-3xl">📷</span>
-              <span className="text-slate-400 text-sm">Tap to upload or take photo</span>
-              <span className="text-slate-600 text-xs">JPG, PNG, HEIC supported</span>
+              <span className="mono text-xs tracking-widest" style={{ color: 'var(--text-secondary)' }}>TAP TO UPLOAD / CAPTURE</span>
+              <span className="mono text-[10px]" style={{ color: 'var(--text-dim)' }}>JPG · PNG · HEIC</span>
             </button>
           )}
           <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} className="hidden" />
-          <p className="text-slate-500 text-xs mt-2">
-            No photo? Complete &quot;What you saw&quot; below — type, size, and amount are required for a text-only report.
+          <p className="mono text-[10px] mt-2 leading-snug" style={{ color: 'var(--text-dim)' }}>
+            No photo — complete sighting details below (type, size, amount required).
           </p>
         </div>
 
-        {/* Structured sighting details (friend: dropdowns for LLM scale / importance) */}
-        <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700 space-y-3">
-          <p className="text-slate-300 text-sm font-medium">What you saw</p>
-          <p className="text-slate-500 text-xs leading-snug">
-            These fields drive the AI assessment first; CV refines when it recognizes objects. Required if you are not attaching a photo.
+        {/* Structured sighting details */}
+        <div className="glass rounded-2xl p-4 space-y-3">
+          <p className="mono text-xs font-bold tracking-widest" style={{ color: 'var(--text-secondary)' }}>SIGHTING DETAILS</p>
+          <p className="mono text-[10px] leading-snug" style={{ color: 'var(--text-dim)' }}>
+            These fields drive AI assessment · required without photo
           </p>
+          {[
+            { label: 'TYPE OF WASTE', value: wasteType, setter: setWasteType, opts: WASTE_TYPE_OPTIONS, placeholder: 'Select…' },
+            { label: 'APPROXIMATE SIZE', value: sizeCategory, setter: setSizeCategory, opts: SIZE_OPTIONS, placeholder: 'Select…' },
+            { label: 'HOW MUCH / HOW MANY', value: quantityBand, setter: setQuantityBand, opts: QUANTITY_OPTIONS, placeholder: 'Select…' },
+          ].map(({ label, value, setter, opts, placeholder }) => (
+            <div key={label}>
+              <label className="block mono text-[10px] font-bold mb-1.5 tracking-widest" style={{ color: 'var(--text-secondary)' }}>{label}</label>
+              <select value={value} onChange={(e) => setter(e.target.value)} style={selectStyle}>
+                <option value="">{placeholder}</option>
+                {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+          ))}
           <div>
-            <label className="block text-slate-400 text-xs font-medium mb-1">Type of waste</label>
-            <select
-              value={wasteType}
-              onChange={(e) => setWasteType(e.target.value)}
-              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            >
-              <option value="">Select…</option>
-              {WASTE_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-slate-400 text-xs font-medium mb-1">Approximate size (biggest dimension or overall pile)</label>
-            <select
-              value={sizeCategory}
-              onChange={(e) => setSizeCategory(e.target.value)}
-              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            >
-              <option value="">Select…</option>
-              {SIZE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-slate-400 text-xs font-medium mb-1">How much / how many</label>
-            <select
-              value={quantityBand}
-              onChange={(e) => setQuantityBand(e.target.value)}
-              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            >
-              <option value="">Select…</option>
-              {QUANTITY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-slate-400 text-xs font-medium mb-1">How it is spread <span className="text-slate-600">(optional)</span></label>
-            <select
-              value={spreadLayout}
-              onChange={(e) => setSpreadLayout(e.target.value)}
-              className="w-full bg-slate-700 text-white rounded-xl px-3 py-2.5 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            >
-              {SPREAD_OPTIONS.map((o) => (
-                <option key={o.value || 'skip'} value={o.value}>{o.label}</option>
-              ))}
+            <label className="block mono text-[10px] font-bold mb-1.5 tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+              SPREAD PATTERN <span style={{ color: 'var(--text-dim)' }}>(OPTIONAL)</span>
+            </label>
+            <select value={spreadLayout} onChange={(e) => setSpreadLayout(e.target.value)} style={selectStyle}>
+              {SPREAD_OPTIONS.map((o) => <option key={o.value || 'skip'} value={o.value}>{o.label}</option>)}
             </select>
           </div>
         </div>
 
         {/* Location */}
-        <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
+        <div className="glass rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-slate-300 text-sm font-medium">Location</p>
+            <p className="mono text-xs font-bold tracking-widest" style={{ color: 'var(--text-secondary)' }}>POSITION FIX</p>
             <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setLocMode('auto');
-                  setLocError(null);
-                  setLocation(null);
-                  queueMicrotask(() => {
-                    if (step === 'report') requestLocation();
-                  });
-                }}
-                className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${locMode === 'auto' ? 'bg-cyan-700 text-white' : 'bg-slate-700 text-slate-400'}`}
-              >
-                Auto GPS
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLocMode('manual');
-                  setLocError(null);
-                }}
-                className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${locMode === 'manual' ? 'bg-cyan-700 text-white' : 'bg-slate-700 text-slate-400'}`}
-              >
-                Manual
-              </button>
+              {[['auto', 'AUTO GPS'], ['manual', 'MANUAL']].map(([mode, lbl]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    if (mode === 'auto') {
+                      setLocMode('auto'); setLocError(null); setLocation(null);
+                      queueMicrotask(() => { if (step === 'report') requestLocation(); });
+                    } else {
+                      setLocMode('manual'); setLocError(null);
+                    }
+                  }}
+                  className="mono text-[10px] px-2.5 py-1 rounded-lg transition-colors tracking-widest"
+                  style={locMode === mode
+                    ? { background: 'rgba(0,212,255,0.15)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }
+                    : { background: 'var(--navy-surface)', border: '1px solid var(--navy-border)', color: 'var(--text-dim)' }}
+                >
+                  {lbl}
+                </button>
+              ))}
             </div>
           </div>
           {locMode === 'auto' ? (
             location ? (
-              <p className="text-cyan-400 text-sm font-mono">
-                {formatCoordPair(location.lat, location.lon)} ✓
-              </p>
+              <p className="mono text-sm" style={{ color: 'var(--cyan-glow)' }}>{formatCoordPair(location.lat, location.lon)} ✓</p>
             ) : locError && !locLoading ? (
               <div className="space-y-2">
-                <p className="text-amber-400/90 text-sm">{locError}</p>
-                <div className="flex gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => requestLocation()}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-cyan-800 hover:bg-cyan-700 text-white"
-                  >
-                    Retry GPS
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setLocMode('manual'); setLocError(null); }}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200"
-                  >
-                    Enter manually
-                  </button>
+                <p className="mono text-xs" style={{ color: 'var(--amber)' }}>{locError}</p>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => requestLocation()} className="mono text-xs px-3 py-1.5 rounded-lg" style={{ background: 'rgba(0,212,255,0.1)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}>RETRY GPS</button>
+                  <button type="button" onClick={() => { setLocMode('manual'); setLocError(null); }} className="mono text-xs px-3 py-1.5 rounded-lg" style={{ background: 'var(--navy-surface)', border: '1px solid var(--navy-border)', color: 'var(--text-secondary)' }}>MANUAL</button>
                 </div>
               </div>
             ) : (
-              <p className="text-slate-400 text-sm">Getting your location…</p>
+              <p className="mono text-xs glow-pulse" style={{ color: 'var(--text-secondary)' }}>ACQUIRING POSITION…</p>
             )
           ) : (
             <div className="space-y-2">
               <div className="flex gap-2">
                 <input
-                  type="number"
-                  step="any"
-                  value={manualLat}
-                  onChange={(e) => setManualLat(e.target.value)}
-                  placeholder="Latitude (e.g. 34.05)"
-                  className="flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  type="number" step="any" value={manualLat} onChange={(e) => setManualLat(e.target.value)}
+                  placeholder="Lat (34.05)" className="flex-1"
+                  style={{ ...inputStyle, width: undefined }}
+                  onFocus={e => e.target.style.borderColor = 'var(--cyan-glow)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--navy-border)'}
                 />
                 <div className="flex flex-1 gap-1 min-w-0">
                   <input
-                    type="number"
-                    step="any"
-                    value={manualLon}
-                    onChange={(e) => setManualLon(e.target.value)}
-                    placeholder="Longitude (e.g. 120.4)"
-                    className="min-w-0 flex-1 bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    type="number" step="any" value={manualLon} onChange={(e) => setManualLon(e.target.value)}
+                    placeholder="Lon (120.4)" className="min-w-0 flex-1"
+                    style={{ ...inputStyle, width: undefined }}
+                    onFocus={e => e.target.style.borderColor = 'var(--cyan-glow)'}
+                    onBlur={e => e.target.style.borderColor = 'var(--navy-border)'}
                   />
                   <select
-                    value={manualLonHemisphere}
-                    onChange={(e) => setManualLonHemisphere(e.target.value)}
-                    className="shrink-0 bg-slate-700 text-white rounded-xl px-2 py-2 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    title="East or West — unsigned numbers use this"
+                    value={manualLonHemisphere} onChange={(e) => setManualLonHemisphere(e.target.value)}
+                    style={{ ...inputStyle, width: undefined, padding: '0.625rem 0.5rem' }}
+                    title="Hemisphere"
                   >
                     <option value="W">W</option>
                     <option value="E">E</option>
                   </select>
                 </div>
               </div>
-              <p className="text-slate-500 text-xs leading-snug">
-                Tip: For US West Coast, enter longitude magnitude and choose <span className="text-slate-400">W</span> (e.g. 120.4 + W = 120.4°W). Or type a signed value <span className="font-mono text-slate-400">-120.4</span> — sign overrides the menu.
+              <p className="mono text-[10px] leading-snug" style={{ color: 'var(--text-dim)' }}>
+                US West Coast: enter magnitude + W (e.g. 120.4 W). Signed value overrides hemisphere.
               </p>
             </div>
           )}
         </div>
 
         {/* Voice / text notes */}
-        <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
+        <div className="glass rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-slate-300 text-sm font-medium">Extra detail <span className="text-slate-500">(optional)</span></p>
+            <p className="mono text-xs font-bold tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+              FIELD NOTES <span style={{ color: 'var(--text-dim)' }}>(OPTIONAL)</span>
+            </p>
             <button
               type="button"
               onClick={listening ? stopVoice : startVoice}
-              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors ${listening ? 'bg-red-600 animate-pulse text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+              className="mono flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-lg transition-colors tracking-widest"
+              style={listening
+                ? { background: 'rgba(239,68,68,0.15)', border: '1px solid var(--red-crit)', color: 'var(--red-crit)' }
+                : { background: 'var(--navy-surface)', border: '1px solid var(--navy-border)', color: 'var(--text-secondary)' }}
             >
-              🎤 {listening ? 'Stop' : 'Voice'}
+              🎤 {listening ? 'STOP' : 'VOICE'}
             </button>
           </div>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Landmarks, wildlife, smell/sheen, time seen, anything not captured above…"
+            placeholder="Landmarks, wildlife, smell/sheen, time observed…"
             rows={3}
-            className="w-full bg-slate-700 text-white placeholder-slate-500 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+            className="w-full text-sm resize-none focus:outline-none"
+            style={{ ...inputStyle, width: '100%' }}
+            onFocus={e => e.target.style.borderColor = 'var(--cyan-glow)'}
+            onBlur={e => e.target.style.borderColor = 'var(--navy-border)'}
           />
-          {listening && <p className="text-red-400 text-xs mt-1">● Listening...</p>}
+          {listening && <p className="mono text-[10px] mt-1 glow-pulse" style={{ color: 'var(--red-crit)' }}>● LISTENING…</p>}
         </div>
 
         <button
           type="submit"
           disabled={loading || (locMode === 'auto' && !location)}
-          className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white font-bold py-4 rounded-xl transition-colors text-base"
+          className="w-full display text-xl tracking-widest py-4 rounded-xl transition-colors disabled:opacity-40"
+          style={{ background: loading ? 'rgba(0,212,255,0.08)' : 'rgba(0,212,255,0.12)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}
         >
-          {loading ? 'Detection + reconciliation + drift…' : 'Submit Sighting Report'}
+          {loading ? 'PROCESSING REPORT…' : 'TRANSMIT SIGHTING →'}
         </button>
       </form>
     </div>

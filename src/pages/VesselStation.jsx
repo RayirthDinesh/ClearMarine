@@ -7,6 +7,13 @@ import { formatEtaShort } from '../lib/cleanupTime';
 
 const STATUS_OPTIONS = ['available', 'deployed', 'returning', 'maintenance'];
 
+const STATUS_STYLE = {
+  available: { background: 'rgba(16,185,129,0.15)', border: '1px solid var(--green-ok)', color: 'var(--green-ok)' },
+  deployed:  { background: 'rgba(0,212,255,0.12)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' },
+  returning: { background: 'rgba(0,137,178,0.15)', border: '1px solid var(--cyan-dim)', color: 'var(--cyan-dim)' },
+  maintenance: { background: 'rgba(245,158,11,0.12)', border: '1px solid var(--amber)', color: 'var(--amber)' },
+};
+
 export default function VesselStation() {
   const { vesselId } = useParams();
   const [vessel, setVessel] = useState(null);
@@ -82,74 +89,75 @@ export default function VesselStation() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-      <p className="text-slate-400">Loading vessel...</p>
+    <div className="min-h-screen naval-bg flex items-center justify-center">
+      <p className="mono text-sm glow-pulse" style={{ color: 'var(--text-secondary)' }}>LOADING VESSEL DATA…</p>
     </div>
   );
 
   if (!vessel) return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-      <p className="text-slate-400">Vessel not found</p>
+    <div className="min-h-screen naval-bg flex items-center justify-center">
+      <p className="mono text-sm" style={{ color: 'var(--red-crit)' }}>VESSEL NOT FOUND</p>
     </div>
   );
 
   const lowSupplies = supplies.filter((s) => s.quantity <= s.low_threshold);
   const fuelLow = vessel.fuel_level <= vessel.fuel_threshold;
-  const statusColor = {
-    available: 'bg-green-700 text-green-200',
-    deployed: 'bg-blue-700 text-blue-200',
-    returning: 'bg-cyan-700 text-cyan-200',
-    maintenance: 'bg-orange-700 text-orange-200',
-  };
+  const activeStatusStyle = STATUS_STYLE[vessel.status] || STATUS_STYLE.available;
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      <header className="bg-slate-800 border-b border-slate-700 px-4 py-3 flex items-center justify-between">
+    <div className="min-h-screen naval-bg" style={{ color: 'var(--text-primary)' }}>
+      <header className="px-4 py-3 flex items-center justify-between" style={{ background: 'rgba(2,12,27,0.9)', borderBottom: '1px solid var(--navy-border)', backdropFilter: 'blur(12px)' }}>
         <div className="flex items-center gap-3">
           <span className="text-2xl">🚢</span>
           <div>
-            <h1 className="text-white font-bold">{vessel.name}</h1>
-            <p className="text-slate-400 text-xs">{vessel.zone} · {vessel.agency}</p>
+            <h1 className="display text-xl tracking-widest" style={{ color: 'var(--cyan-glow)' }}>{vessel.name.toUpperCase()}</h1>
+            <p className="mono text-[10px] tracking-widest" style={{ color: 'var(--text-secondary)' }}>{vessel.zone} · {vessel.agency}</p>
           </div>
         </div>
-        <a href="/dashboard" className="text-cyan-400 text-sm hover:underline">← Dashboard</a>
+        <a href="/dashboard" className="mono text-[10px] tracking-widest transition-colors" style={{ color: 'var(--text-dim)' }}
+          onMouseEnter={e => e.target.style.color = 'var(--cyan-glow)'}
+          onMouseLeave={e => e.target.style.color = 'var(--text-dim)'}
+        >← COMMAND</a>
       </header>
 
       <div className="max-w-lg mx-auto p-4 space-y-4">
         {/* Priority alerts */}
         {(lowSupplies.length > 0 || fuelLow) && (
-          <div className="bg-red-900 border border-red-600 rounded-xl px-4 py-3">
-            <p className="text-red-200 font-bold text-sm">⚠ PRIORITY ALERTS</p>
-            {fuelLow && <p className="text-red-300 text-xs mt-0.5">Fuel critically low ({vessel.fuel_level}%) — return to port</p>}
-            {lowSupplies.length > 0 && <p className="text-red-300 text-xs mt-0.5">Low supplies: {lowSupplies.map((s) => s.name).join(', ')}</p>}
+          <div className="rounded-xl px-4 py-3 slide-up" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid var(--red-crit)' }}>
+            <p className="mono text-xs font-bold tracking-widest mb-1" style={{ color: 'var(--red-crit)' }}>⚠ PRIORITY ALERTS</p>
+            {fuelLow && <p className="mono text-xs mt-0.5" style={{ color: '#fca5a5' }}>Fuel critically low ({vessel.fuel_level}%) — return to port</p>}
+            {lowSupplies.length > 0 && <p className="mono text-xs mt-0.5" style={{ color: '#fca5a5' }}>Low supplies: {lowSupplies.map((s) => s.name).join(', ')}</p>}
           </div>
         )}
 
         {/* Vessel status */}
-        <div className="bg-slate-800 rounded-2xl p-5 border border-slate-700">
+        <div className="glass rounded-2xl p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <p className="text-slate-400 text-xs mb-1">Current Status</p>
-              <span className={`text-sm font-bold px-3 py-1 rounded-full ${statusColor[vessel.status] || 'bg-slate-700 text-white'}`}>
+              <p className="mono text-[10px] tracking-widest mb-2" style={{ color: 'var(--text-secondary)' }}>CURRENT STATUS</p>
+              <span className="mono text-xs font-bold px-3 py-1 rounded tracking-widest" style={activeStatusStyle}>
                 {vessel.status.toUpperCase()}
               </span>
             </div>
             <div className="text-right">
-              <p className="text-slate-400 text-xs mb-1">Capacity</p>
-              <p className="text-white font-bold">{vessel.capacity} m³</p>
+              <p className="mono text-[10px] tracking-widest mb-1" style={{ color: 'var(--text-secondary)' }}>CAPACITY</p>
+              <p className="mono font-bold" style={{ color: 'var(--text-primary)' }}>{vessel.capacity} m³</p>
             </div>
           </div>
 
           {/* Status switcher */}
-          <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="grid grid-cols-2 gap-2 mb-5">
             {STATUS_OPTIONS.map((s) => (
               <button
                 key={s}
                 onClick={() => updateStatus(s)}
                 disabled={updating || vessel.status === s}
-                className={`py-2 rounded-xl text-xs font-medium transition-colors capitalize disabled:opacity-40 ${vessel.status === s ? 'bg-cyan-700 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}
+                className="py-2 rounded-xl mono text-[10px] font-bold transition-colors capitalize disabled:opacity-40 tracking-widest"
+                style={vessel.status === s
+                  ? activeStatusStyle
+                  : { background: 'var(--navy-surface)', border: '1px solid var(--navy-border)', color: 'var(--text-dim)' }}
               >
-                {s}
+                {s.toUpperCase()}
               </button>
             ))}
           </div>
@@ -157,29 +165,41 @@ export default function VesselStation() {
           {/* Fuel */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-slate-400 text-sm">Fuel Level</p>
-              <span className={`text-sm font-bold ${fuelLow ? 'text-red-400' : 'text-white'}`}>{vessel.fuel_level}%</span>
+              <p className="mono text-xs tracking-widest" style={{ color: 'var(--text-secondary)' }}>FUEL LEVEL</p>
+              <span className="mono text-sm font-bold" style={{ color: fuelLow ? 'var(--red-crit)' : 'var(--green-ok)' }}>{vessel.fuel_level}%</span>
             </div>
-            <div className="w-full bg-slate-700 rounded-full h-3">
+            <div className="w-full rounded-full h-2" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)' }}>
               <div
-                className={`h-3 rounded-full transition-all ${fuelLow ? 'bg-red-500' : vessel.fuel_level > 60 ? 'bg-green-500' : 'bg-yellow-500'}`}
-                style={{ width: `${vessel.fuel_level}%` }}
+                className="h-2 rounded-full transition-all"
+                style={{
+                  width: `${vessel.fuel_level}%`,
+                  background: fuelLow ? 'var(--red-crit)' : vessel.fuel_level > 60 ? 'var(--green-ok)' : 'var(--amber)',
+                  boxShadow: fuelLow ? '0 0 8px rgba(239,68,68,0.5)' : vessel.fuel_level > 60 ? '0 0 8px rgba(16,185,129,0.4)' : '0 0 8px rgba(245,158,11,0.4)',
+                }}
               />
             </div>
             <div className="flex gap-2">
-              <button onClick={() => updateFuel(-10)} className="flex-1 bg-slate-700 hover:bg-red-900 text-white text-xs py-1.5 rounded-lg transition-colors">− 10% used</button>
-              <button onClick={() => updateFuel(+20)} className="flex-1 bg-slate-700 hover:bg-green-900 text-white text-xs py-1.5 rounded-lg transition-colors">+ 20% refuel</button>
+              <button onClick={() => updateFuel(-10)} className="flex-1 mono text-[10px] py-1.5 rounded-lg tracking-widest transition-colors"
+                style={{ background: 'var(--navy-surface)', border: '1px solid var(--navy-border)', color: 'var(--text-dim)' }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--red-crit)'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--navy-border)'}
+              >− 10% USED</button>
+              <button onClick={() => updateFuel(+20)} className="flex-1 mono text-[10px] py-1.5 rounded-lg tracking-widest transition-colors"
+                style={{ background: 'var(--navy-surface)', border: '1px solid var(--navy-border)', color: 'var(--text-dim)' }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--green-ok)'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--navy-border)'}
+              >+ 20% REFUEL</button>
             </div>
           </div>
         </div>
 
         {/* Current assignment */}
         {assignment && (
-          <div className="bg-blue-950 border border-blue-700 rounded-2xl p-4">
-            <p className="text-blue-300 text-xs font-semibold uppercase tracking-wider mb-2">Active Assignment</p>
+          <div className="rounded-2xl p-4 slide-up" style={{ background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.3)' }}>
+            <p className="mono text-[10px] font-bold tracking-widest mb-3" style={{ color: 'var(--cyan-glow)' }}>◈ ACTIVE ASSIGNMENT</p>
             {assignment.debris_sightings && (
               <div className="mb-3">
-                <p className="text-white font-semibold text-sm">
+                <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
                   {assignment.debris_sightings.density_label} {assignment.debris_sightings.debris_type?.replace('_', ' ')} cluster
                 </p>
                 {assignment.debris_sightings.pickup_mode && (
@@ -189,74 +209,101 @@ export default function VesselStation() {
                     </span>
                   </p>
                 )}
-                <p className="text-slate-300 text-xs mt-1">{assignment.debris_sightings.gemini_analysis?.slice(0, 100)}...</p>
+                <p className="text-xs mt-1 leading-snug" style={{ color: 'var(--text-secondary)' }}>{assignment.debris_sightings.gemini_analysis?.slice(0, 100)}…</p>
               </div>
             )}
-            <div className="bg-slate-900 rounded-xl p-3 mb-3 text-xs space-y-1">
-              <p className="text-slate-400">Intercept point</p>
-              <p className="text-cyan-400 font-mono">
+            <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)' }}>
+              <p className="mono text-[10px] tracking-widest mb-1" style={{ color: 'var(--text-dim)' }}>INTERCEPT POINT</p>
+              <p className="mono text-sm font-bold" style={{ color: 'var(--cyan-glow)' }}>
                 {formatCoordPair(assignment.interception_lat ?? 0, assignment.interception_lon ?? 0)}
               </p>
-              <p className="text-slate-400">ETA: {assignment.interception_hours}h from dispatch</p>
+              <p className="mono text-xs mt-1" style={{ color: 'var(--text-dim)' }}>ETA: {assignment.interception_hours}h from dispatch</p>
             </div>
             {(Number.isFinite(assignment.estimated_kg) || Number.isFinite(assignment.estimated_trips) || Number.isFinite(assignment.total_minutes)) && (
-              <div className="bg-slate-900 rounded-xl p-3 mb-3 text-xs space-y-1 border border-emerald-800">
-                <p className="text-emerald-300 font-semibold uppercase tracking-wider text-[10px]">Cleanup estimate</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-300">
+              <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--navy-deep)', border: '1px solid rgba(16,185,129,0.3)' }}>
+                <p className="mono text-[10px] tracking-widest mb-2" style={{ color: 'var(--green-ok)' }}>CLEANUP ESTIMATE</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs mono" style={{ color: 'var(--text-secondary)' }}>
                   {Number.isFinite(assignment.estimated_kg) && (
-                    <span>~<span className="font-mono text-white">{Math.round(assignment.estimated_kg)} kg</span></span>
+                    <span>~<span className="font-bold" style={{ color: 'var(--text-primary)' }}>{Math.round(assignment.estimated_kg)} kg</span></span>
                   )}
                   {Number.isFinite(assignment.estimated_trips) && (
-                    <span><span className="font-mono text-white">{assignment.estimated_trips}</span> trip{assignment.estimated_trips === 1 ? '' : 's'}</span>
+                    <span><span className="font-bold" style={{ color: 'var(--text-primary)' }}>{assignment.estimated_trips}</span> trip{assignment.estimated_trips === 1 ? '' : 's'}</span>
                   )}
                   {Number.isFinite(assignment.total_minutes) && (
-                    <span>total <span className="font-mono text-white">{formatEtaShort(assignment.total_minutes)}</span></span>
+                    <span>total <span className="font-bold" style={{ color: 'var(--text-primary)' }}>{formatEtaShort(assignment.total_minutes)}</span></span>
                   )}
                 </div>
                 {assignment.crew_type && (
-                  <p className="text-slate-500 text-[10px]">Mode: {assignment.crew_type === 'land' ? 'shore crew' : 'ship vessel'}</p>
+                  <p className="mono text-[10px] mt-1" style={{ color: 'var(--text-dim)' }}>Mode: {assignment.crew_type === 'land' ? 'shore crew' : 'ship vessel'}</p>
                 )}
               </div>
             )}
             {assignment.gemini_brief && (
-              <div className="bg-slate-900 rounded-xl p-3 mb-3">
-                <p className="text-slate-400 text-xs mb-1 font-medium">Crew Brief</p>
-                <p className="text-slate-300 text-xs leading-relaxed whitespace-pre-wrap">{assignment.gemini_brief}</p>
+              <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)' }}>
+                <p className="mono text-[10px] tracking-widest mb-1" style={{ color: 'var(--text-secondary)' }}>CREW BRIEF</p>
+                <p className="text-xs leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>{assignment.gemini_brief}</p>
               </div>
             )}
-            <button onClick={markIntercepted} className="w-full bg-green-700 hover:bg-green-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
-              ✓ Mark Intercepted
+            <button
+              onClick={markIntercepted}
+              className="w-full display text-lg tracking-widest py-3 rounded-xl transition-colors"
+              style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid var(--green-ok)', color: 'var(--green-ok)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(16,185,129,0.22)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(16,185,129,0.12)'}
+            >
+              ✓ MARK INTERCEPTED
             </button>
           </div>
         )}
 
         {/* Supplies */}
-        <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
+        <div className="glass rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-slate-300 font-semibold text-sm">Zone Supplies</h2>
-            <span className="text-slate-500 text-xs">Tap ± to adjust</span>
+            <p className="mono text-xs font-bold tracking-widest" style={{ color: 'var(--text-secondary)' }}>ZONE SUPPLIES</p>
+            <span className="mono text-[10px]" style={{ color: 'var(--text-dim)' }}>TAP ± TO ADJUST</span>
           </div>
           {supplies.length === 0 ? (
-            <p className="text-slate-500 text-sm">No supplies tracked for this zone</p>
+            <p className="mono text-xs" style={{ color: 'var(--text-dim)' }}>No supplies tracked for this zone</p>
           ) : (
             <div className="space-y-2">
               {supplies.map((s) => {
                 const isLow = s.quantity <= s.low_threshold;
                 return (
-                  <div key={s.id} className={`flex items-center justify-between rounded-xl px-3 py-2.5 ${isLow ? 'bg-red-950 border border-red-700' : 'bg-slate-700'}`}>
+                  <div key={s.id} className="flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors"
+                    style={isLow
+                      ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.4)' }
+                      : { background: 'var(--navy-surface)', border: '1px solid var(--navy-border)' }}
+                  >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-100 text-sm font-medium">{s.name}</span>
-                        {isLow && <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded-full animate-pulse">PRIORITY</span>}
+                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                        {isLow && (
+                          <span className="mono text-[9px] font-bold px-1.5 py-0.5 rounded tracking-widest critical-dot"
+                            style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid var(--red-crit)', color: 'var(--red-crit)' }}>
+                            LOW
+                          </span>
+                        )}
                       </div>
-                      <p className="text-slate-500 text-xs">Min: {s.low_threshold}</p>
+                      <p className="mono text-[10px] mt-0.5" style={{ color: 'var(--text-dim)' }}>Min: {s.low_threshold}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => adjustSupply(s, -1)} disabled={s.quantity === 0 || adjusting === s.id}
-                        className="w-8 h-8 bg-slate-600 hover:bg-red-800 disabled:opacity-30 text-white rounded-lg font-bold transition-colors flex items-center justify-center">−</button>
-                      <span className={`w-8 text-center font-bold ${isLow ? 'text-red-400' : 'text-white'}`}>{s.quantity}</span>
-                      <button onClick={() => adjustSupply(s, +1)} disabled={adjusting === s.id}
-                        className="w-8 h-8 bg-slate-600 hover:bg-green-800 text-white rounded-lg font-bold transition-colors flex items-center justify-center">+</button>
+                      <button
+                        onClick={() => adjustSupply(s, -1)}
+                        disabled={s.quantity === 0 || adjusting === s.id}
+                        className="w-8 h-8 mono font-bold rounded-lg transition-colors flex items-center justify-center disabled:opacity-30"
+                        style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)', color: 'var(--text-secondary)' }}
+                        onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.borderColor = 'var(--red-crit)'; }}
+                        onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--navy-border)'}
+                      >−</button>
+                      <span className="w-8 text-center mono font-bold text-sm" style={{ color: isLow ? 'var(--red-crit)' : 'var(--text-primary)' }}>{s.quantity}</span>
+                      <button
+                        onClick={() => adjustSupply(s, +1)}
+                        disabled={adjusting === s.id}
+                        className="w-8 h-8 mono font-bold rounded-lg transition-colors flex items-center justify-center disabled:opacity-30"
+                        style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)', color: 'var(--text-secondary)' }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--green-ok)'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--navy-border)'}
+                      >+</button>
                     </div>
                   </div>
                 );

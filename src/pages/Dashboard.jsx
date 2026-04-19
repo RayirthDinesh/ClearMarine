@@ -819,48 +819,50 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="h-screen bg-slate-900 text-white flex flex-col">
-      <header className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center gap-3 flex-wrap shrink-0">
-        <span className="text-xl">🌊</span>
-        <div>
-          <h1 className="text-base font-bold text-white">ClearMarine — Coordination Center</h1>
-          <p className="text-slate-400 text-xs">ClearMarine fleet — one desk; hand off to EPA partner when needed</p>
+    <div className="h-screen naval-bg text-white flex flex-col" style={{ color: 'var(--text-primary)' }}>
+      <header className="px-4 py-2 flex items-center gap-3 flex-wrap shrink-0" style={{ background: 'rgba(7,22,40,0.95)', borderBottom: '1px solid var(--navy-border)' }}>
+        <div className="flex items-center gap-2">
+          <span className="text-xl">🌊</span>
+          <div>
+            <h1 className="display text-lg tracking-widest" style={{ color: 'var(--cyan-glow)', textShadow: '0 0 20px rgba(0,212,255,0.4)' }}>CLEARMARINE OPS</h1>
+            <p className="mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>REAL-TIME DEBRIS COORDINATION // PACIFIC COMMAND</p>
+          </div>
         </div>
         <div className="flex items-center gap-2 ml-auto flex-wrap text-xs">
-          {/* Role / partner lane (same app, different queue filter) */}
           <select
             value={myAgency}
             onChange={(e) => setMyAgency(e.target.value)}
-            className="bg-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1 border border-slate-600 focus:outline-none"
+            className="text-xs rounded px-2 py-1 focus:outline-none mono"
+            style={{ background: 'var(--navy-surface)', border: '1px solid var(--navy-border)', color: 'var(--text-primary)' }}
             title="Same coordination app — switch which incoming handoffs you accept"
           >
             {AGENCIES.map((a) => <option key={a} value={a}>{a}</option>)}
           </select>
-          <span className="text-slate-300">
-            {visibleSightings.length} active
+          <span className="mono" style={{ color: 'var(--text-secondary)' }}>
+            <span style={{ color: 'var(--cyan-glow)' }}>{visibleSightings.length}</span> active
             {sightings.length > visibleSightings.length && (
               <span className="text-slate-500 ml-1" title="Land positions (Pacific model) are hidden from map and queue">
                 ({sightings.length - visibleSightings.length} on land hidden)
               </span>
             )}
           </span>
-          <span className={availableFleet.length === 0 ? 'text-red-400 font-bold' : 'text-cyan-400'}>
-            {availableFleet.length} vessel{availableFleet.length === 1 ? '' : 's'} ready
+          <span className={`mono font-bold ${availableFleet.length === 0 ? '' : ''}`} style={{ color: availableFleet.length === 0 ? 'var(--red-crit)' : 'var(--green-ok)' }}>
+            {availableFleet.length} ready
           </span>
           {visibleHandoffs.length > 0 && (
-            <span className="bg-yellow-700 text-yellow-200 px-2 py-0.5 rounded-full font-bold">
-              {visibleHandoffs.length} handoff{visibleHandoffs.length > 1 ? 's' : ''}
+            <span className="mono font-bold px-2 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid var(--amber)', color: 'var(--amber)' }}>
+              ⚑ {visibleHandoffs.length} HANDOFF
             </span>
           )}
           {lowSupplies.length > 0 && (
-            <span className="bg-red-700 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">
-              ⚠ {lowSupplies.length} supply alert{lowSupplies.length > 1 ? 's' : ''}
+            <span className="mono font-bold px-2 py-0.5 rounded critical-dot" style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid var(--red-crit)', color: 'var(--red-crit)' }}>
+              ▲ {lowSupplies.length} SUPPLY
             </span>
           )}
-          <a href="/report" className="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1 rounded-lg transition-colors">+ Report</a>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-green-400">Live</span>
+          <a href="/report" className="mono font-bold px-3 py-1 rounded transition-colors" style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}>+ REPORT</a>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full live-dot" style={{ background: 'var(--green-ok)' }} />
+            <span className="mono text-[10px]" style={{ color: 'var(--green-ok)' }}>LIVE</span>
           </div>
         </div>
       </header>
@@ -1080,14 +1082,12 @@ export default function Dashboard() {
           </MapContainer>
 
           {/* Coordinate display */}
-          <div className="absolute bottom-4 left-4 bg-slate-900 bg-opacity-90 rounded-xl p-3 text-xs space-y-1 z-[1000] min-w-[200px] pointer-events-none">
-            <p className="text-slate-400 font-semibold mb-1">Drift forecast</p>
-            <p className="text-slate-500 leading-snug mb-1">Track follows surface current — capped at realistic speed and clipped at the first coast it touches (NE Pacific shoreline or global land mask).</p>
-            <p className="text-slate-500 leading-snug mb-1">Badges: Ship / Ship+coast use drift + shoreline (same as report pipeline).</p>
-            <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-yellow-400" /><span className="text-slate-300">24h</span></div>
-            <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-orange-500" /><span className="text-slate-300">48h</span></div>
-            <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-red-500" /><span className="text-slate-300">72h</span></div>
-            <div className="flex items-center gap-2"><span className="text-orange-400">⚑</span><span className="text-slate-300">Shore only if track reaches coast</span></div>
+          <div className="absolute bottom-4 left-4 glass rounded-xl p-3 text-xs space-y-1 z-[1000] min-w-[200px] pointer-events-none mono">
+            <p className="display tracking-widest text-sm mb-2" style={{ color: 'var(--cyan-glow)' }}>DRIFT FORECAST</p>
+            <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-yellow-400" /><span style={{ color: 'var(--text-secondary)' }}>+24H</span></div>
+            <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-orange-500" /><span style={{ color: 'var(--text-secondary)' }}>+48H</span></div>
+            <div className="flex items-center gap-2"><div className="w-6 h-0.5 bg-red-500" /><span style={{ color: 'var(--text-secondary)' }}>+72H</span></div>
+            <div className="flex items-center gap-2"><span style={{ color: 'var(--amber)' }}>⚑</span><span style={{ color: 'var(--text-secondary)' }}>COASTAL</span></div>
             {ongoingMissions.length > 0 && (
               <div className="flex items-center gap-2 pt-1 border-t border-slate-700 mt-1">
                 <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -1107,49 +1107,59 @@ export default function Dashboard() {
         </div>
 
         {/* Sidebar */}
-        <div className="w-80 bg-slate-800 border-l border-slate-700 flex flex-col overflow-hidden shrink-0">
-          <div className="flex border-b border-slate-700">
+        <div className="w-80 flex flex-col overflow-hidden shrink-0" style={{ background: 'var(--navy-mid)', borderLeft: '1px solid var(--navy-border)' }}>
+          <div className="flex" style={{ borderBottom: '1px solid var(--navy-border)' }}>
             {['missions', 'sightings', 'vessels', 'supplies'].map((t) => (
               <button key={t} onClick={() => setActiveTab(t)}
-                className={`flex-1 py-2 text-xs font-medium capitalize transition-colors ${activeTab === t ? 'border-b-2 border-cyan-500 text-cyan-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                className="flex-1 py-2 text-[10px] font-bold uppercase tracking-widest transition-all mono"
+                style={activeTab === t
+                  ? { borderBottom: '2px solid var(--cyan-glow)', color: 'var(--cyan-glow)', background: 'rgba(0,212,255,0.05)' }
+                  : { color: 'var(--text-dim)', borderBottom: '2px solid transparent' }
+                }>
                 {t}
-                {t === 'missions' && ongoingMissions.length > 0 && <span className="ml-1 bg-emerald-700 text-emerald-100 px-1 rounded animate-pulse">{ongoingMissions.length}</span>}
-                {t === 'sightings' && visibleSightings.length > 0 && <span className="ml-1 bg-slate-700 px-1 rounded">{visibleSightings.length}</span>}
-                {t === 'supplies' && lowSupplies.length > 0 && <span className="ml-1 bg-red-700 text-white px-1 rounded">{lowSupplies.length}</span>}
+                {t === 'missions' && ongoingMissions.length > 0 && <span className="ml-1 px-1 rounded" style={{ background: 'var(--green-ok)', color: '#000', fontSize: 9 }}>{ongoingMissions.length}</span>}
+                {t === 'sightings' && visibleSightings.length > 0 && <span className="ml-1 px-1 rounded" style={{ background: 'var(--navy-surface)', color: 'var(--text-secondary)', fontSize: 9 }}>{visibleSightings.length}</span>}
+                {t === 'supplies' && lowSupplies.length > 0 && <span className="ml-1 px-1 rounded" style={{ background: 'var(--red-crit)', color: '#fff', fontSize: 9 }}>{lowSupplies.length}</span>}
               </button>
             ))}
           </div>
 
           {/* AI Suggestions */}
-          <div className="p-3 border-b border-slate-700">
+          <div className="p-3" style={{ borderBottom: '1px solid var(--navy-border)' }}>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-1">
-                <span className="text-cyan-400">✦</span> AI Crew Agent
+              <span className="display tracking-widest text-sm flex items-center gap-1.5" style={{ color: 'var(--cyan-glow)' }}>
+                ✦ AI CREW AGENT
               </span>
               <button onClick={fireAiSuggestions} disabled={aiLoading}
-                className="text-xs bg-cyan-800 hover:bg-cyan-700 disabled:opacity-40 text-white px-2 py-0.5 rounded-lg">
-                {aiLoading ? '...' : 'Refresh'}
+                className="mono text-[10px] font-bold px-2 py-0.5 rounded transition-colors"
+                style={{ background: 'rgba(0,212,255,0.1)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}>
+                {aiLoading ? '···' : 'REFRESH'}
               </button>
             </div>
             {availableFleet.length === 0 && (
-              <p className="text-amber-400 text-xs mb-2 leading-snug">No vessels available — AI cannot assign a hull until one is free.</p>
+              <p className="mono text-[10px] mb-2 leading-snug" style={{ color: 'var(--amber)' }}>▲ No vessels available — free a hull to enable AI dispatch.</p>
             )}
             {aiSuggestions.length === 0 ? (
-              <p className="text-slate-500 text-xs">Suggestions refresh after loads and live updates (~1s). Use Refresh to run again.</p>
+              <p className="mono text-[10px]" style={{ color: 'var(--text-dim)' }}>Auto-refreshes after live updates. Hit REFRESH to force.</p>
             ) : (
               <div className="space-y-1.5">
                 {aiSuggestions.map((s, i) => {
                   const label = actionLabel(s.action_type);
                   return (
-                    <div key={i} className={`rounded-lg p-2 flex items-start gap-2 ${s.completed ? 'bg-green-950 border border-green-800' : 'bg-slate-700'}`}>
-                      <span className="text-slate-500 text-xs shrink-0">{i + 1}.</span>
-                      <p className="text-slate-200 text-xs flex-1 leading-snug">{s.text}</p>
+                    <div key={i} className="rounded-lg p-2 flex items-start gap-2"
+                      style={s.completed
+                        ? { background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)' }
+                        : { background: 'var(--navy-surface)', border: '1px solid var(--navy-border)' }
+                      }>
+                      <span className="mono text-[10px] shrink-0" style={{ color: 'var(--text-dim)' }}>{i + 1}.</span>
+                      <p className="text-xs flex-1 leading-snug" style={{ color: 'var(--text-primary)' }}>{s.text}</p>
                       {s.completed ? (
-                        <span className="text-green-400 text-xs shrink-0">✓</span>
+                        <span className="text-xs shrink-0" style={{ color: 'var(--green-ok)' }}>✓</span>
                       ) : label ? (
                         <button onClick={() => executeAction(s, i)} disabled={executingAction === i}
-                          className="shrink-0 bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 text-white text-xs px-2 py-0.5 rounded-lg transition-colors whitespace-nowrap">
-                          {executingAction === i ? '...' : label}
+                          className="shrink-0 mono text-[10px] font-bold px-2 py-0.5 rounded transition-colors whitespace-nowrap"
+                          style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}>
+                          {executingAction === i ? '···' : label.toUpperCase()}
                         </button>
                       ) : null}
                     </div>
@@ -1160,7 +1170,7 @@ export default function Dashboard() {
           </div>
 
           {/* Tab Content */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div className="flex-1 overflow-y-auto p-3 space-y-2 fade-in">
             {activeTab === 'missions' && (
               <>
                 {ongoingMissions.length === 0 ? (
@@ -1239,17 +1249,17 @@ export default function Dashboard() {
 
             {activeTab === 'sightings' && pendingHandoffs.length > 0 && (
               <div className="space-y-2 mb-2">
-                <p className="text-yellow-400 text-xs font-semibold uppercase tracking-wider">Incoming Handoffs → {myAgency}</p>
+                <p className="display tracking-widest text-sm" style={{ color: 'var(--amber)' }}>⚑ INCOMING → {myAgency.toUpperCase()}</p>
                 {pendingHandoffs.map((s) => (
-                  <div key={s.id} className="border border-yellow-600 bg-yellow-950 rounded-xl p-3">
+                  <div key={s.id} className="rounded-xl p-3" style={{ border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.06)' }}>
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${densityBadge(s.density_score, s.density_label)}`}>{s.density_label}</span>
                           <span className="text-xs text-slate-300 capitalize">{s.debris_type?.replace('_', ' ')}</span>
                         </div>
-                        <p className="text-yellow-300 text-xs mt-0.5">From: {s.source_jurisdiction}</p>
-                        <p className="text-slate-400 text-xs mt-0.5">{s.gemini_analysis?.slice(0, 80)}...</p>
+                        <p className="mono text-[10px] mt-0.5" style={{ color: 'var(--amber)' }}>FROM: {s.source_jurisdiction}</p>
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>{s.gemini_analysis?.slice(0, 80)}...</p>
                       </div>
                       <button onClick={() => acceptHandoff(s)}
                         className="shrink-0 bg-yellow-500 hover:bg-yellow-400 text-black text-xs font-bold px-2 py-1 rounded-lg">
@@ -1281,7 +1291,14 @@ export default function Dashboard() {
                   key={s.id}
                   ref={(el) => { sightingRefs.current[s.id] = el; }}
                   onClick={() => selectSighting(s)}
-                  className={`rounded-xl p-3 border-l-4 cursor-pointer transition-all ${isSelected ? 'ring-2 ring-cyan-500' : ''} ${s.density_score >= 8 ? 'border-red-500 bg-red-950' : s.density_score >= 6 ? 'border-orange-500 bg-orange-950' : s.density_score >= 3 ? 'border-yellow-500 bg-yellow-950' : 'border-green-500 bg-green-950'}`}
+                  className="rounded-xl p-3 border-l-4 cursor-pointer transition-all"
+                  style={{
+                    borderLeftColor: s.density_score >= 8 ? '#ef4444' : s.density_score >= 6 ? '#f97316' : s.density_score >= 3 ? '#eab308' : '#10b981',
+                    background: isSelected ? 'rgba(0,212,255,0.06)' : 'var(--navy-surface)',
+                    border: isSelected ? '1px solid rgba(0,212,255,0.4)' : '1px solid var(--navy-border)',
+                    borderLeft: `4px solid ${s.density_score >= 8 ? '#ef4444' : s.density_score >= 6 ? '#f97316' : s.density_score >= 3 ? '#eab308' : '#10b981'}`,
+                    boxShadow: isSelected ? '0 0 16px rgba(0,212,255,0.1)' : 'none',
+                  }}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
@@ -1323,8 +1340,8 @@ export default function Dashboard() {
                         </span>
                         <span className="text-xs text-slate-300 capitalize">{s.debris_type?.replace('_', ' ')}</span>
                       </div>
-                      <p className="text-slate-400 text-xs mt-1">{s.estimated_volume} · {s.reporter_name}</p>
-                      <p className="text-slate-500 text-xs font-mono">{formatCoordPair(s.latitude, s.longitude)}</p>
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{s.estimated_volume} · {s.reporter_name}</p>
+                      <p className="mono text-[10px]" style={{ color: 'var(--cyan-dim)' }}>{formatCoordPair(s.latitude, s.longitude)}</p>
                       {lfSide?.showLandfallFlag && lfSide.coastAlert && (
                         <p className="text-amber-300 text-xs mt-1 leading-snug border border-amber-600/50 rounded-lg p-2 bg-amber-950/40">
                           <span className="font-bold">Coast call:</span> {lfSide.coastAlert}
@@ -1372,21 +1389,29 @@ export default function Dashboard() {
             })}
 
             {activeTab === 'vessels' && vessels.map((v) => (
-              <a key={v.id} href={`/vessel/${v.id}`} className="block rounded-xl p-3 bg-slate-700 hover:bg-slate-600 transition-colors">
+              <a key={v.id} href={`/vessel/${v.id}`} className="block rounded-xl p-3 transition-all" style={{ background: 'var(--navy-surface)', border: '1px solid var(--navy-border)' }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--cyan-glow)'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--navy-border)'}
+              >
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-white text-sm font-medium">{v.name}</p>
-                    <p className="text-slate-400 text-xs">{v.zone}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${v.status === 'available' ? 'bg-green-700 text-green-200' : v.status === 'deployed' ? 'bg-blue-700 text-blue-200' : 'bg-orange-700 text-orange-200'}`}>
-                        {v.status}
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{v.name}</p>
+                    <p className="mono text-[10px] mt-0.5" style={{ color: 'var(--text-dim)' }}>{v.zone}</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="mono text-[10px] font-bold px-1.5 py-0.5 rounded"
+                        style={{
+                          background: v.status === 'available' ? 'rgba(16,185,129,0.15)' : v.status === 'deployed' ? 'rgba(0,212,255,0.15)' : 'rgba(245,158,11,0.15)',
+                          border: `1px solid ${v.status === 'available' ? 'var(--green-ok)' : v.status === 'deployed' ? 'var(--cyan-glow)' : 'var(--amber)'}`,
+                          color: v.status === 'available' ? 'var(--green-ok)' : v.status === 'deployed' ? 'var(--cyan-glow)' : 'var(--amber)',
+                        }}>
+                        {v.status.toUpperCase()}
                       </span>
-                      <span className={`text-xs ${v.fuel_level <= v.fuel_threshold ? 'text-red-400 font-bold' : 'text-slate-400'}`}>
+                      <span className="mono text-[10px]" style={{ color: v.fuel_level <= v.fuel_threshold ? 'var(--red-crit)' : 'var(--text-secondary)' }}>
                         ⛽ {v.fuel_level}%
                       </span>
                     </div>
                   </div>
-                  <span className="text-slate-400 text-xs">→</span>
+                  <span className="mono text-xs" style={{ color: 'var(--cyan-glow)' }}>→</span>
                 </div>
               </a>
             ))}
@@ -1505,9 +1530,9 @@ export default function Dashboard() {
         const pickupKey = ranking?.pickupKey;
         const noOptions = ranked.length === 0;
         return (
-          <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-            <div className="bg-slate-800 rounded-2xl p-6 max-w-lg w-full border border-slate-600 shadow-2xl max-h-[90vh] overflow-y-auto">
-              <h3 className="text-white font-bold text-lg mb-1">Dispatch Cleanup Crew</h3>
+          <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: 'rgba(2,12,27,0.85)', backdropFilter: 'blur(8px)' }}>
+            <div className="glass rounded-2xl p-6 max-w-lg w-full shadow-2xl max-h-[90vh] overflow-y-auto slide-up">
+              <h3 className="display tracking-widest text-xl mb-1" style={{ color: 'var(--cyan-glow)' }}>DISPATCH CREW</h3>
               <p className="text-slate-400 text-sm mb-1">{assignModal.density_label} {assignModal.debris_type?.replace('_', ' ')} cluster</p>
               <p className="text-slate-500 text-xs mb-4">
                 Site mass est: <span className="text-slate-300 font-mono">{Math.round(kg)} kg</span>
@@ -1571,9 +1596,9 @@ export default function Dashboard() {
 
       {/* Assignment Brief Modal */}
       {briefModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-800 rounded-2xl p-6 max-w-md w-full border border-slate-600 shadow-2xl">
-            <h3 className="text-white font-bold text-lg mb-1">Crew Brief — {briefModal.crewName}</h3>
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: 'rgba(2,12,27,0.85)', backdropFilter: 'blur(8px)' }}>
+          <div className="glass rounded-2xl p-6 max-w-md w-full shadow-2xl slide-up">
+            <h3 className="display tracking-widest text-xl mb-1" style={{ color: 'var(--cyan-glow)' }}>CREW BRIEF — {briefModal.crewName?.toUpperCase()}</h3>
             <p className="text-slate-400 text-sm mb-1">
               {briefModal.crewType === 'ship' && briefModal.intercept ? (
                 <>
@@ -1592,25 +1617,27 @@ export default function Dashboard() {
                 Estimate: <span className="text-slate-300 font-mono">~{Math.round(briefModal.est.kg)} kg · {briefModal.est.trips} trip{briefModal.est.trips === 1 ? '' : 's'} · {formatEtaShort(briefModal.est.totalMinutes)}</span>
               </p>
             )}
-            <div className="bg-slate-900 rounded-xl p-4 mb-4">
-              <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{briefModal.brief}</p>
+            <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)' }}>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>{briefModal.brief}</p>
             </div>
-            <button onClick={() => setBriefModal(null)} className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold py-2.5 rounded-xl transition-colors">Done</button>
+            <button onClick={() => setBriefModal(null)} className="w-full mono font-bold py-2.5 rounded-xl transition-colors"
+              style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}>DONE</button>
           </div>
         </div>
       )}
 
       {/* Handoff Brief Modal */}
       {handoffModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-800 rounded-2xl p-6 max-w-md w-full border border-slate-600 shadow-2xl">
-            <h3 className="text-white font-bold text-lg mb-1">Jurisdiction Handoff — Sent</h3>
-            <p className="text-slate-400 text-sm mb-4">{handoffModal.fromAgency} → {handoffModal.toAgency}</p>
-            <div className="bg-slate-900 rounded-xl p-4 mb-4">
-              <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{handoffModal.brief}</p>
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: 'rgba(2,12,27,0.85)', backdropFilter: 'blur(8px)' }}>
+          <div className="glass rounded-2xl p-6 max-w-md w-full shadow-2xl slide-up">
+            <h3 className="display tracking-widest text-xl mb-1" style={{ color: 'var(--amber)' }}>⚑ JURISDICTION HANDOFF</h3>
+            <p className="mono text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>{handoffModal.fromAgency?.toUpperCase()} → {handoffModal.toAgency?.toUpperCase()}</p>
+            <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--navy-deep)', border: '1px solid var(--navy-border)' }}>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>{handoffModal.brief}</p>
             </div>
-            <p className="text-slate-500 text-xs mb-3">Pending acceptance by {handoffModal.toAgency}. Use the role selector at the top (same app) to switch to that partner queue and accept.</p>
-            <button onClick={() => setHandoffModal(null)} className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold py-2.5 rounded-xl transition-colors">Done</button>
+            <p className="mono text-[10px] mb-3" style={{ color: 'var(--text-dim)' }}>Pending acceptance by {handoffModal.toAgency}. Switch role selector to that queue to accept.</p>
+            <button onClick={() => setHandoffModal(null)} className="w-full mono font-bold py-2.5 rounded-xl transition-colors"
+              style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid var(--cyan-glow)', color: 'var(--cyan-glow)' }}>DONE</button>
           </div>
         </div>
       )}
