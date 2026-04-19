@@ -54,6 +54,60 @@ describe('computePacificLandfallDisplay (Atlantic / global mask)', () => {
       expect(lo).toBeLessThan(-70); // Florida's western Gulf coast is around -83°
     }
   });
+
+  test('Gulf-of-Mexico sighting does NOT get a fake Baja Pacific landfall', () => {
+    // Origin sits in the Gulf, drift heads west toward the Texas/Mexico coast. With the
+    // old loose `lon <= -65` gate, this fell into the Pacific shoreline knots and produced
+    // a "Land contact ~27°, -114°" flag (on the Pacific side of Baja California). With the
+    // tightened gate it falls through to the global polygon mask and clips at the actual
+    // Gulf coast (lon roughly -94 to -98).
+    const drift = {
+      lat_24h: 27.5, lon_24h: -90,
+      lat_48h: 27.5, lon_48h: -94,
+      lat_72h: 27.5, lon_72h: -98,
+    };
+    const r = computePacificLandfallDisplay(27.5, -85, drift);
+    if (r.landfallPoint) {
+      // Must not be on the Pacific side of Baja California.
+      expect(r.landfallPoint[1]).toBeGreaterThan(-100);
+    }
+    for (const [, lo] of r.pathPoints) {
+      // Nothing in this Gulf path should be flagged near -114° (Pacific Baja).
+      expect(lo).toBeGreaterThan(-100);
+    }
+  });
+
+  test('East-Coast Florida sighting does NOT get a fake Baja Pacific landfall', () => {
+    const drift = {
+      lat_24h: 27, lon_24h: -79,
+      lat_48h: 27, lon_48h: -80.4,
+      lat_72h: 27, lon_72h: -81.8,
+    };
+    const r = computePacificLandfallDisplay(27, -78, drift);
+    if (r.landfallPoint) {
+      expect(r.landfallPoint[1]).toBeGreaterThan(-90);
+    }
+  });
+});
+
+describe('isNortheastPacificShorelineModel', () => {
+  test('accepts SoCal / Baja / Pacific Northwest', () => {
+    expect(isNortheastPacificShorelineModel(34, -120)).toBe(true);   // SoCal
+    expect(isNortheastPacificShorelineModel(27, -114)).toBe(true);   // Baja Pacific
+    expect(isNortheastPacificShorelineModel(47, -125)).toBe(true);   // WA coast
+  });
+
+  test('rejects Gulf of Mexico / East Coast / Caribbean', () => {
+    expect(isNortheastPacificShorelineModel(27.5, -85)).toBe(false); // Gulf
+    expect(isNortheastPacificShorelineModel(28, -77)).toBe(false);   // Off Florida
+    expect(isNortheastPacificShorelineModel(40, -70)).toBe(false);   // Off New England
+    expect(isNortheastPacificShorelineModel(18, -75)).toBe(false);   // Caribbean
+  });
+
+  test('rejects everything outside the western hemisphere too', () => {
+    expect(isNortheastPacificShorelineModel(35, 140)).toBe(false);   // Off Japan
+    expect(isNortheastPacificShorelineModel(0, 10)).toBe(false);     // Gulf of Guinea
+  });
 });
 
 describe('clipDriftPathAgainstGlobalLand', () => {

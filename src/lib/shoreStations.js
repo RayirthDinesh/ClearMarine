@@ -37,6 +37,16 @@ function flatDistanceSq(lat1, lon1, lat2, lon2) {
   return dLat * dLat + dLon * dLon;
 }
 
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const toR = (d) => (d * Math.PI) / 180;
+  const dLat = toR(lat2 - lat1);
+  const dLon = toR(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toR(lat1)) * Math.cos(toR(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 /**
  * Find the nearest shoreline point to (lat, lon). Tries the NE Pacific knots first
  * (precise, sub-degree), falls back to the global polygon mask. Returns [lat, lon] or
@@ -71,6 +81,17 @@ export function nearestShorePoint(lat, lon) {
   return nearestPolygonShorePoint(lat, lon) || bestPt;
 }
 
+/**
+ * Distance in km from (lat, lon) to the nearest modeled shore point.
+ * Returns Infinity if no shore can be found (so callers can compare and gate without null checks).
+ */
+export function nearestShoreDistanceKm(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return Infinity;
+  const np = nearestShorePoint(lat, lon);
+  if (!np) return Infinity;
+  return haversineKm(lat, lon, np[0], np[1]);
+}
+
 /** Stable synthetic id derived from the station's coordinates so re-renders match. */
 export function syntheticShoreId(lat, lon) {
   return `${SYNTHETIC_PREFIX}${lat.toFixed(3)}_${lon.toFixed(3)}`;
@@ -94,24 +115,39 @@ export function synthesizeShoreStationForSighting(sighting, drift) {
     return null;
   }
 
-  let stationLat = null;
-  let stationLon = null;
-  let label = 'Shore patrol';
-
+  // Pick whichever shore anchor is geographically closer to the SIGHTING:
+  //  a) the predicted drift landfall point, or
+  //  b) the nearest modeled shore point to the sighting itself.
+  // Real DB shore crews still compete with this synthetic via rankCrewsForSighting.
+  let landfallPoint = null;
   if (drift) {
     const lf = computePacificLandfallDisplay(sighting.latitude, sighting.longitude, drift);
     if (lf?.landfallPoint && Number.isFinite(lf.landfallPoint[0]) && Number.isFinite(lf.landfallPoint[1])) {
-      [stationLat, stationLon] = lf.landfallPoint;
-      label = 'Shore patrol (landfall)';
+      landfallPoint = lf.landfallPoint;
     }
   }
+  const nearestPoint = nearestShorePoint(sighting.latitude, sighting.longitude);
 
-  if (stationLat == null) {
-    const np = nearestShorePoint(sighting.latitude, sighting.longitude);
-    if (!np) return null;
-    [stationLat, stationLon] = np;
-    label = 'Shore patrol (nearest coast)';
+  const candidates = [];
+  if (landfallPoint) {
+    candidates.push({
+      pt: landfallPoint,
+      label: 'Shore patrol (landfall)',
+      distKm: haversineKm(sighting.latitude, sighting.longitude, landfallPoint[0], landfallPoint[1]),
+    });
   }
+  if (nearestPoint) {
+    candidates.push({
+      pt: nearestPoint,
+      label: 'Shore patrol (nearest coast)',
+      distKm: haversineKm(sighting.latitude, sighting.longitude, nearestPoint[0], nearestPoint[1]),
+    });
+  }
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => a.distKm - b.distKm);
+  const [stationLat, stationLon] = candidates[0].pt;
+  const label = candidates[0].label;
 
   return {
     id: syntheticShoreId(stationLat, stationLon),

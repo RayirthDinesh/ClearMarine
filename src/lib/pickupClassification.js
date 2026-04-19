@@ -6,10 +6,16 @@
  * Outside the NE Pacific shoreline model we cannot classify; callers should show "verify locally".
  */
 
-import {
-  computePacificLandfallDisplay,
-  isNortheastPacificShorelineModel,
-} from './landfall';
+import { computePacificLandfallDisplay } from './landfall';
+import { nearestShoreDistanceKm } from './shoreStations';
+
+/**
+ * Maximum distance (km) the debris itself can be from the nearest shore for the
+ * `ship_coast` (shore-crew) lane to apply. Beyond this a beach team can't reach the
+ * water in time even if drift will eventually carry the debris ashore — fall back to
+ * a ship recovery instead.
+ */
+export const MAX_SHORE_PICKUP_KM = 75;
 
 /** @typedef {{ key: string, shortLabel: string, detail: string }} PickupClassification */
 
@@ -64,16 +70,10 @@ export function classifyPickupMode(originLat, originLon, drift) {
   }
 
   // On-land detection is intentionally disabled — see landfall.isOnLandInPacificModel.
-  // Drift→shore detection (ship_coast / shore-crew lane) still runs below via computePacificLandfallDisplay.
-
-  if (!isNortheastPacificShorelineModel(originLat, originLon)) {
-    return {
-      key: PICKUP_MODE.UNKNOWN,
-      shortLabel: 'Verify locally',
-      detail:
-        'Outside the NE Pacific drift and shoreline model — use local charts; vessel vs land routing is not auto-classified here.',
-    };
-  }
+  // Drift→shore detection (ship_coast / shore-crew lane) runs below via
+  // `computePacificLandfallDisplay`, which uses the precise NE Pacific knots inside the
+  // CA/Baja window and falls back to the global continent polygons everywhere else
+  // (Gulf, Atlantic, Caribbean, Asia, etc.) — so we can classify worldwide.
 
   if (
     !drift
@@ -90,11 +90,22 @@ export function classifyPickupMode(originLat, originLon, drift) {
   const lf = computePacificLandfallDisplay(originLat, originLon, drift);
 
   if (lf.showLandfallFlag) {
+    // Beach crews can only handle debris that's actually nearshore. If the drift will
+    // reach land but the debris itself is currently far offshore, recover by ship instead.
+    const distanceToShoreKm = nearestShoreDistanceKm(originLat, originLon);
+    if (Number.isFinite(distanceToShoreKm) && distanceToShoreKm > MAX_SHORE_PICKUP_KM) {
+      return {
+        key: PICKUP_MODE.SHIP,
+        shortLabel: 'Ship pickup',
+        detail:
+          `Drift forecast reaches land in 24–72h, but the debris is ~${Math.round(distanceToShoreKm)} km offshore — too far for a beach crew. Recover by ship before it strands.`,
+      };
+    }
     return {
       key: PICKUP_MODE.SHIP_AND_COAST,
       shortLabel: 'Shore crew',
       detail:
-        'Drift forecast reaches land within 24–72h — this is a SHORE-crew job. ClearMarine auto-dispatches the closest available land team; ships are only used as a fallback if no shore crew is ready.',
+        'Drift forecast reaches land within 24–72h and the debris is nearshore — assign the closest shore crew.',
     };
   }
 

@@ -47,13 +47,24 @@ function capLegFromOrigin(originLat, originLon, lat, lon, elapsedHours) {
 }
 
 /**
- * CA/OR/WA heuristic coast — only valid where lon is west of ~65°W (eastern Pacific).
- * Reports in Asia, Europe, Indian Ocean, Australia: no clip, no fake US landfall flag.
+ * CA/Baja/OR/WA heuristic coast — only valid for the actual NE Pacific window the
+ * COAST_KNOTS arrays describe (roughly Baja → Vancouver Island, west of mainland Mexico).
+ *
+ * Why the box is tight: the COAST_KNOTS only model the US/Mexico Pacific shoreline. If we
+ * accept any "western hemisphere" longitude here, a Gulf-of-Mexico or East-Coast sighting
+ * gets fed into the Pacific shoreline knots and the bisection projects a fake "landfall"
+ * onto the Baja coast at the same latitude (e.g. a Houston debris report flagged at
+ * ~-114° lon). For everything outside this box we fall through to the global polygon
+ * mask in `clipDriftPathAgainstGlobalLand`, which knows every continent.
  */
 export function isNortheastPacificShorelineModel(lat, lon) {
   if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return false;
-  if (lat < 8 || lat > 55) return false;
-  return lon <= -65;
+  // Latitude band of the Baja + CA + OR + WA knots.
+  if (lat < 22 || lat > 50) return false;
+  // Longitude band: from offshore California (~ -132°) to just west of the Sierra/Mexican
+  // mainland (~ -108°). Anything east of -108 (Gulf, Caribbean, Mississippi basin, FL,
+  // East Coast) is not in this model — the global mask handles it.
+  return lon >= -132 && lon <= -108;
 }
 
 /**

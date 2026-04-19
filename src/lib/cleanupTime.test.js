@@ -97,14 +97,19 @@ describe('estimateShipPickupMinutes', () => {
 });
 
 describe('rankCrewsForSighting', () => {
+  // Sighting and vessels are positioned offshore (west of the coastal land polygon)
+  // so the new water-only path filter doesn't reject every candidate. The new
+  // `firstLandContactFraction`-based filter in rankCrewsForSighting drops vessels
+  // whose straight-line route to the sighting touches a continent polygon — keep
+  // these test fixtures in the open ocean to exercise the ranking behavior itself.
   const sighting = {
-    latitude: 32.78, longitude: -117.20,
+    latitude: 32.50, longitude: -118.00,
     debris_type: 'plastic', density_score: 5, estimated_volume: '~120 kg',
   };
   const vessels = [
     { id: 'v1', name: 'Far Vessel',  status: 'available', current_lat: 21.30, current_lon: -157.82, capacity_kg: 1500, vessel_speed_kn: 12 },
-    { id: 'v2', name: 'Local Vessel', status: 'available', current_lat: 32.85, current_lon: -117.30, capacity_kg: 1500, vessel_speed_kn: 14 },
-    { id: 'v3', name: 'Maint Vessel', status: 'maintenance', current_lat: 32.80, current_lon: -117.25, capacity_kg: 1500, vessel_speed_kn: 14 },
+    { id: 'v2', name: 'Local Vessel', status: 'available', current_lat: 32.85, current_lon: -119.40, capacity_kg: 1500, vessel_speed_kn: 14 },
+    { id: 'v3', name: 'Maint Vessel', status: 'maintenance', current_lat: 32.80, current_lon: -119.45, capacity_kg: 1500, vessel_speed_kn: 14 },
   ];
   const landCrews = [
     { id: 'l1', name: 'SD Beach', status: 'available', base_lat: 32.72, base_lon: -117.16, capacity_kg: 100, transport_speed_kmh: 50, response_minutes: 12 },

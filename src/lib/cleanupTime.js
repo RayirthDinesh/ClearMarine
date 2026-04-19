@@ -13,6 +13,7 @@
  */
 
 import { haversineKm } from './gliderCurrents';
+import { firstLandContactFraction } from './globalLandMask';
 
 const KM_PER_NM = 1.852;
 
@@ -225,6 +226,17 @@ export function rankCrewsForSighting({ pickupKey, sighting, vessels = [], landCr
     for (const v of vessels) {
       if (v.status !== 'available') continue;
       if (!Number.isFinite(v.current_lat) || !Number.isFinite(v.current_lon)) continue;
+      // Reject vessels whose straight-line route to the sighting would cross land — a
+      // West Coast hull can't physically reach a Gulf/Atlantic sighting without going
+      // around a continent, so we never include it as a candidate.
+      if (
+        Number.isFinite(sighting?.latitude)
+        && Number.isFinite(sighting?.longitude)
+        && firstLandContactFraction(
+          v.current_lat, v.current_lon,
+          sighting.latitude, sighting.longitude,
+        ) != null
+      ) continue;
       const est = estimateShipPickupMinutes({
         vessel: v,
         sightingLat: sighting?.latitude,

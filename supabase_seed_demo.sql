@@ -16,7 +16,7 @@ delete from land_crews;
 insert into vessels (name, zone, agency, status, fuel_level, fuel_threshold, capacity, capacity_kg, vessel_speed_kn, current_lat, current_lon) values
   ('Ocean Guardian I',   'Zone A — California Coast', 'Local Coastguard', 'available',  78, 25, 100, 1500, 12, 34.05, -120.42),
   ('Sea Shepherd II',    'Zone B — Hawaii Waters',    'Local Coastguard', 'available',  91, 25, 120, 1800, 14, 21.30, -157.82),
-  ('EPA Response Unit',  'Zone C — Federal Waters',   'EPA',              'available',  55, 25, 200, 3000, 10, 36.10, -124.90),
+  ('EPA Response Unit',  'Zone C — Federal Waters',   'EPA',                'available',  55, 25, 200, 3000, 10, 36.10, -124.90),
   ('Pacific Interceptor','Zone A — California Coast', 'Local Coastguard', 'deployed',   40, 25,  80, 1200, 13, 33.70, -118.50),
   ('Deep Clean Alpha',   'Zone D — Open Pacific',     'EPA',              'maintenance',20, 25, 150, 2200,  9, 28.00, -145.00);
 

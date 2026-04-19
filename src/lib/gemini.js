@@ -1142,32 +1142,72 @@ ${DEBRIS_JSON_SCHEMA}`;
 }
 
 // Crew assignment + interception suggestions
-export async function getCrewSuggestions({ sightings, vessels, assignments, pendingHandoffs = [] }) {
+export async function getCrewSuggestions({
+  sightings,
+  vessels,
+  landCrews = [],
+  assignments,
+  pendingHandoffs = [],
+  crewRankings = new Map(),
+  supplies = [],
+}) {
   const available = (vessels || []).filter((v) => v.status === 'available');
   const availJson = JSON.stringify(available.map((v) => ({
     id: v.id, name: v.name, zone: v.zone, fuel: v.fuel_level, capacity: v.capacity,
   })));
+  const shoreCrews = (landCrews || []).filter((c) => c.status === 'available' || c.status === 'standby' || !c.status);
+  const shoreJson = JSON.stringify(shoreCrews.map((c) => ({
+    id: c.id, name: c.name, lat: c.base_lat, lon: c.base_lon,
+  })));
+  const lowSupplies = (supplies || []).filter((s) => s.quantity <= s.low_threshold);
+  const supplyJson = JSON.stringify(lowSupplies.map((s) => ({
+    id: s.id, name: s.name, qty: s.quantity, low_at: s.low_threshold,
+  })));
+
+  // Pre-computed rankings let the AI pick the right crew per sighting without re-deriving distance.
+  const rankingHints = (sightings || []).map((s) => {
+    const r = crewRankings.get?.(s.id);
+    if (!r || !Array.isArray(r.ranked) || r.ranked.length === 0) return null;
+    const top = r.ranked.slice(0, 3).map((row) => ({
+      crew_type: row.crewType,
+      crew_id: row.crewId,
+      crew_name: row.crewName,
+      eta_min: row.totalMinutes,
+    }));
+    return { sighting_id: s.id, pickup: r.pickupKey, top };
+  }).filter(Boolean);
 
   const prompt = `You are the AI crew coordinator for ClearMarine (one operations center; vessels below are OUR fleet).
-Active debris sightings: ${JSON.stringify(sightings.map(s => ({ id: s.id, type: s.debris_type, density: s.density_label, score: s.density_score, lat: s.latitude, lon: s.longitude, status: s.status })))}
+
+QUEUE (sightings NOT yet on any open assignment — these are the ONLY sightings you may dispatch to):
+${JSON.stringify((sightings || []).map(s => ({ id: s.id, type: s.debris_type, density: s.density_label, score: s.density_score, lat: s.latitude, lon: s.longitude })))}
+
 Pending handoffs to accept (this desk): ${JSON.stringify((pendingHandoffs || []).map(s => ({ handoff_id: s.id, id: s.id, from: s.source_jurisdiction, type: s.debris_type, density: s.density_label })))}
 AVAILABLE vessels (status=available — ONLY these can be assigned; you MUST pick one by name and id): ${availJson || '[]'}
 Other vessels (deployed/maintenance — do NOT assign): ${JSON.stringify((vessels || []).filter(v => v.status !== 'available').map(v => ({ name: v.name, status: v.status })))}
-Assignments: ${JSON.stringify(assignments.map(a => ({ vessel_id: a.vessel_id, sighting_id: a.sighting_id, status: a.status })))}
+Available shore crews (use these for shore / coastal-flagged debris only): ${shoreJson || '[]'}
+Pre-ranked crew options per queued sighting (use the top entry for that sighting): ${JSON.stringify(rankingHints)}
+Open assignments (context only — DO NOT recommend dispatch for these sighting_ids): ${JSON.stringify((assignments || []).filter(a => a.status !== 'completed').map(a => ({ vessel_id: a.vessel_id, land_crew_id: a.land_crew_id, sighting_id: a.sighting_id, status: a.status })))}
+Low-stock supplies that should be reordered: ${supplyJson || '[]'}
 
 Rules:
+- ONLY pick sightings from the QUEUE list. Never recommend dispatching to a sighting that already appears in Open assignments.
+- Each item must be DIFFERENT — do not repeat the same sighting_id, vessel_id, land_crew_id, supply_id, or handoff_id across items.
+- Prefer the top-ranked crew from "Pre-ranked crew options" for each sighting.
 - For assign_vessel: text MUST name the exact vessel (e.g. "Send Ocean Guardian I to intercept…") and set vessel_id to that vessel's UUID from AVAILABLE list only.
-- If AVAILABLE is empty: do NOT use assign_vessel. Use action_type "none" with text explaining no hulls are ready (suggest freeing a vessel or waiting). Optionally suggest reorder_supply if supplies are low.
-- Prioritize highest-density sightings and nearest zone match to the debris lat/lon.
+- For assign_land_crew: text MUST name the exact shore crew and set land_crew_id to that crew's id (use the ranked option for that sighting). Use this for ship_coast / land pickups.
+- If AVAILABLE vessels are empty AND no shore crews are usable: do NOT use assign_*. Prefer reorder_supply (when supplies are low) or accept_handoff, otherwise action_type "none" explaining why.
+- If the QUEUE is empty AND no handoffs are pending, fill slots with reorder_supply for low-stock items, then "none".
+- Prioritize highest-density sightings and shortest ETA from the ranking hints.
 
-Return ONLY a JSON array of exactly 3 action items, no markdown:
+Return ONLY a JSON array of up to 3 action items, no markdown. Skip a slot rather than repeat:
 [
-  {"text":"Send [VESSEL NAME] to …","action_type":"assign_vessel","sighting_id":null,"vessel_id":null,"supply_id":null,"handoff_id":null},
-  {"text":"…","action_type":"accept_handoff","sighting_id":null,"vessel_id":null,"supply_id":null,"handoff_id":null},
-  {"text":"…","action_type":"reorder_supply","sighting_id":null,"vessel_id":null,"supply_id":null,"handoff_id":null}
+  {"text":"Send [VESSEL NAME] to …","action_type":"assign_vessel","sighting_id":null,"vessel_id":null,"land_crew_id":null,"supply_id":null,"handoff_id":null},
+  {"text":"…","action_type":"assign_land_crew","sighting_id":null,"vessel_id":null,"land_crew_id":null,"supply_id":null,"handoff_id":null},
+  {"text":"…","action_type":"reorder_supply","sighting_id":null,"vessel_id":null,"land_crew_id":null,"supply_id":null,"handoff_id":null}
 ]
-action_type: assign_vessel | accept_handoff | reorder_supply | mark_cleared | none
-Set sighting_id, vessel_id, handoff_id from the data above when relevant.`;
+action_type: assign_vessel | assign_land_crew | accept_handoff | reorder_supply | mark_cleared | none
+Set sighting_id, vessel_id, land_crew_id, supply_id, handoff_id from the data above when relevant.`;
 
   const response = await groqTextCompletion([{ role: 'user', content: prompt }]);
   const raw = response.choices[0].message.content.trim();
