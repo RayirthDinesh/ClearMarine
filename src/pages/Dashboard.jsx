@@ -143,6 +143,12 @@ export default function Dashboard() {
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [newAssignToast, setNewAssignToast] = useState(null);
   const toastTimerRef = useRef(null);
+
+  const showAssignToast = useCallback((label, detail, type = 'assignment') => {
+    setNewAssignToast({ label, detail, type });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setNewAssignToast(null), 5000);
+  }, []);
   const [aiLoading, setAiLoading] = useState(false);
   const [executingAction, setExecutingAction] = useState(null);
   const [assignModal, setAssignModal] = useState(null);
@@ -457,23 +463,21 @@ export default function Dashboard() {
   // Realtime subscription (stable — uses refs internally)
   useEffect(() => {
     const channel = supabase.channel('clearmarine-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'debris_sightings' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'debris_sightings' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const row = payload.new;
+          showAssignToast(
+            row.reporter_name || 'Field reporter',
+            row.debris_type?.replace('_', ' ') || 'debris',
+            'sighting',
+          );
+        }
         void fetchData().then(() => scheduleAiRefresh());
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vessels' }, () => {
         void fetchData().then(() => scheduleAiRefresh());
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          const row = payload.new;
-          const vessel = vesselsDataRef.current.find((v) => v.id === row.vessel_id);
-          const sighting = sightingsDataRef.current.find((s) => s.id === row.sighting_id);
-          const crewName = vessel?.name || (row.crew_type === 'land' ? 'Shore crew' : 'Crew');
-          const debrisType = sighting?.debris_type?.replace('_', ' ') || 'debris';
-          setNewAssignToast({ crewName, debrisType });
-          if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-          toastTimerRef.current = setTimeout(() => setNewAssignToast(null), 6000);
-        }
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, () => {
         void fetchData().then(() => scheduleAiRefresh());
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'supplies' }, () => {
@@ -494,6 +498,20 @@ export default function Dashboard() {
 
   const handleAssign = async () => {
     if (!assignModal || !selectedCrew) return;
+    // Guard: check DB for any active assignment on this sighting before inserting
+    const { data: existing } = await supabase
+      .from('assignments')
+      .select('id')
+      .eq('sighting_id', assignModal.id)
+      .eq('status', 'assigned')
+      .limit(1);
+    if (existing?.length > 0) {
+      alert('This sighting already has an active assignment. Complete or clear the existing mission first.');
+      setAssignModal(null);
+      setSelectedCrew(null);
+      await fetchData();
+      return;
+    }
     const ranking = crewRankings.get(assignModal.id);
     const est = ranking?.ranked.find((r) => r.crewId === selectedCrew.id && r.crewType === selectedCrew.type);
 
@@ -532,6 +550,7 @@ export default function Dashboard() {
         supabase.from('debris_sightings').update({ status: 'assigned' }).eq('id', assignModal.id),
         supabase.from('vessels').update({ status: 'deployed', updated_at: new Date().toISOString() }).eq('id', vessel.id),
       ]);
+      showAssignToast(vessel.name, assignModal.debris_type?.replace('_', ' ') || 'debris', 'assignment');
       setBriefModal({ brief, crewName: vessel.name, crewType: 'ship', sighting: assignModal, intercept, est });
     } else {
       // Look up the crew either in real DB land crews OR in the synthetic station for this sighting.
@@ -576,6 +595,7 @@ export default function Dashboard() {
         );
       }
       await Promise.all(followups);
+      showAssignToast(crew.name, assignModal.debris_type?.replace('_', ' ') || 'debris', 'assignment');
       setBriefModal({ brief, crewName: crew.name, crewType: 'land', sighting: assignModal, intercept: null, est });
     }
 
@@ -743,6 +763,7 @@ export default function Dashboard() {
             console.error('Auto-dispatch insert failed', insertErr);
             continue;
           }
+          showAssignToast(crew.name, sighting.debris_type?.replace('_', ' ') || 'debris', 'assignment');
           const followups = [
             supabase.from('debris_sightings').update({ status: 'assigned' }).eq('id', sighting.id),
           ];
@@ -1390,14 +1411,15 @@ export default function Dashboard() {
                       {(() => {
                         const r = crewRankings.get(s.id);
                         const hasOptions = (r?.ranked?.length || 0) > 0;
+                        const alreadyAssigned = missionBySighting.has(s.id);
                         return (
                           <button
                             onClick={() => setAssignModal(s)}
-                            disabled={!hasOptions}
-                            title={!hasOptions ? 'No crew available for this pickup mode' : ''}
+                            disabled={!hasOptions || alreadyAssigned}
+                            title={alreadyAssigned ? 'Already on active mission' : !hasOptions ? 'No crew available for this pickup mode' : ''}
                             className="bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-2 py-1 rounded-lg"
                           >
-                            Dispatch
+                            {alreadyAssigned ? 'Assigned' : 'Dispatch'}
                           </button>
                         );
                       })()}
@@ -1654,16 +1676,35 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* New Assignment Toast */}
+      {/* Toast notification */}
       {newAssignToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] slide-up pointer-events-none"
-          style={{ minWidth: 280 }}>
-          <div className="glass rounded-xl px-4 py-3 flex items-center gap-3" style={{ border: '1px solid var(--green-ok)', boxShadow: '0 0 24px rgba(16,185,129,0.3)' }}>
-            <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: 'var(--green-ok)', boxShadow: '0 0 8px var(--green-ok)' }} />
+        <div
+          className="slide-up"
+          style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, minWidth: 300, pointerEvents: 'none' }}
+        >
+          <div style={{
+            background: 'rgba(7,22,40,0.97)',
+            border: `1px solid ${newAssignToast.type === 'sighting' ? 'var(--cyan-glow)' : 'var(--green-ok)'}`,
+            boxShadow: `0 0 24px ${newAssignToast.type === 'sighting' ? 'rgba(0,212,255,0.35)' : 'rgba(16,185,129,0.35)'}`,
+            borderRadius: '0.75rem',
+            padding: '10px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}>
+            <div style={{
+              width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+              background: newAssignToast.type === 'sighting' ? 'var(--cyan-glow)' : 'var(--green-ok)',
+              boxShadow: `0 0 8px ${newAssignToast.type === 'sighting' ? 'var(--cyan-glow)' : 'var(--green-ok)'}`,
+            }} />
             <div>
-              <p className="mono text-xs font-bold tracking-widest" style={{ color: 'var(--green-ok)' }}>NEW ASSIGNMENT DISPATCHED</p>
-              <p className="mono text-[10px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                {newAssignToast.crewName} → {newAssignToast.debrisType}
+              <p style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: newAssignToast.type === 'sighting' ? 'var(--cyan-glow)' : 'var(--green-ok)', margin: 0 }}>
+                {newAssignToast.type === 'sighting' ? 'NEW SIGHTING REPORTED' : 'ASSIGNMENT DISPATCHED'}
+              </p>
+              <p style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 10, color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                {newAssignToast.type === 'sighting'
+                  ? `${newAssignToast.label} filed a ${newAssignToast.detail} report`
+                  : `${newAssignToast.label} → ${newAssignToast.detail}`}
               </p>
             </div>
           </div>
