@@ -69,11 +69,15 @@ export function classifyPickupMode(originLat, originLon, drift) {
     };
   }
 
-  // On-land detection is intentionally disabled — see landfall.isOnLandInPacificModel.
-  // Drift→shore detection (ship_coast / shore-crew lane) runs below via
-  // `computePacificLandfallDisplay`, which uses the precise NE Pacific knots inside the
-  // CA/Baja window and falls back to the global continent polygons everywhere else
-  // (Gulf, Atlantic, Caribbean, Asia, etc.) — so we can classify worldwide.
+  // If debris is already on or very near shore, land crew takes priority regardless of drift.
+  const distanceToShoreKm = nearestShoreDistanceKm(originLat, originLon);
+  if (Number.isFinite(distanceToShoreKm) && distanceToShoreKm <= 15) {
+    return {
+      key: PICKUP_MODE.LAND,
+      shortLabel: 'Land crew',
+      detail: `Debris is ~${Math.round(distanceToShoreKm * 10) / 10} km from shore — assign the nearest land crew.`,
+    };
+  }
 
   if (
     !drift
@@ -92,7 +96,6 @@ export function classifyPickupMode(originLat, originLon, drift) {
   if (lf.showLandfallFlag) {
     // Beach crews can only handle debris that's actually nearshore. If the drift will
     // reach land but the debris itself is currently far offshore, recover by ship instead.
-    const distanceToShoreKm = nearestShoreDistanceKm(originLat, originLon);
     if (Number.isFinite(distanceToShoreKm) && distanceToShoreKm > MAX_SHORE_PICKUP_KM) {
       return {
         key: PICKUP_MODE.SHIP,

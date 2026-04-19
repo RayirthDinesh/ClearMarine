@@ -1344,10 +1344,10 @@ export default function Dashboard() {
     }
     for (const c of landCrews || []) {
       if (!c?.id) continue;
-      if (!c.agency || c.agency === myAgency) add(c);
+      add(c);
     }
     return out;
-  }, [ongoingMissions, visibleSightings, crewRankings, landCrews, myAgency]);
+  }, [ongoingMissions, visibleSightings, crewRankings, landCrews]);
 
   const landCrewIdsOnShoreMission = useMemo(() => {
     const ids = new Set();
@@ -1418,7 +1418,7 @@ export default function Dashboard() {
     const drift = getDrift(s.id);
     const driftForPickup = driftForPickupFromRow(drift);
     const pickup = classifyPickupMode(s.latitude, s.longitude, driftForPickup);
-    const lfSide = drift ? computePacificLandfallDisplay(s.latitude, s.longitude, drift) : null;
+    const lfSide = (drift && pickup.key !== 'land') ? computePacificLandfallDisplay(s.latitude, s.longitude, drift) : null;
     const isSelected = selectedSightingId === s.id;
     const sightingMission = missionBySighting.get(s.id);
     const r = crewRankings.get(s.id);
@@ -1587,7 +1587,7 @@ export default function Dashboard() {
                 }
                 : null;
               const pickup = classifyPickupMode(s.latitude, s.longitude, driftForPickup);
-              const lf = drift
+              const lf = (drift && pickup.key !== 'land')
                 ? computePacificLandfallDisplay(s.latitude, s.longitude, drift)
                 : {
                   showLandfallFlag: false,
@@ -2104,7 +2104,7 @@ export default function Dashboard() {
             {activeTab === 'crews' && (
               <>
                 <p className="text-slate-500 text-[10px] leading-snug mb-2">
-                  Every shore crew on a mission, in a sighting ranking (incl. synthetic patrols), plus other <span className="text-slate-400">{myAgency}</span> DB crews.
+                  All shore crews — missions active, available, and on standby across all agencies.
                 </p>
                 {crewsTabList.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-700 p-3 text-center">
