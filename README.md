@@ -1,12 +1,14 @@
 # ClearMarine
 
+> 🥉 **3rd Place — DataHacks 2026** · Climate & Environment Track
+
 **Ocean debris sightings → AI-enriched assessments → drift-aware dispatch for ships and shore crews.**
 
-Built for **DataHacks 2026**.  
-**Repo:** [github.com/shrivassudharsan1/ClearMarine](https://github.com/shrivassudharsan1/ClearMarine)
+Built for **DataHacks 2026**.
+
+🎥 **[Demo Video](https://www.youtube.com/watch?v=UWdY2FZE97E)** &nbsp;|&nbsp; 🌊 **[Live App](https://clear-marine.vercel.app/dashboard)** &nbsp;|&nbsp; 💻 **[Repo](https://github.com/shrivassudharsan1/ClearMarine)**
 
 ---
-
 ## Elevator pitch (45 seconds)
 
 Marine debris reports are chaotic: photos, handwritten notes, radio chatter, and no shared picture of *who should respond*. ClearMarine gives the public a single **naval-themed field report** (`/report`), fuses **structured form data + optional CV signals + Groq reasoning** into one severity narrative, then forecasts **where debris may drift** using **real CORC Spray glider currents** plus HYCOM-style fallbacks. Coordinators watch a **live ops map** (`/dashboard`), get **Groq-ranked crew suggestions**, dispatch the right **vessel or land crew**, and crews execute from a dedicated **vessel workstation** (`/vessel/:id`). Supabase ties it together with **Realtime** updates so the room sees the same incident evolve.
